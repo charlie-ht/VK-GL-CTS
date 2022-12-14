@@ -51,6 +51,7 @@
 #include "vkCmdUtil.hpp"
 #include "vkObjUtil.hpp"
 #include "vkBuilderUtil.hpp"
+#include "vkImageWithMemory.hpp"
 #include "vkBufferWithMemory.hpp"
 #include "vkBarrierUtil.hpp"
 
@@ -2409,6 +2410,451 @@ void CopyImageToBuffer::copyRegionToTextureLevel (tcu::ConstPixelBufferAccess sr
 			tcu::copy(dstSubRegion, srcSubRegion);
 		}
 	}
+}
+
+enum class QueueSelectionOptions { Universal, ComputeOnly, TransferOnly };
+
+std::vector<std::string> removeExtensions (const std::vector<std::string>& a, const std::vector<const char*>& b)
+{
+	std::vector<std::string>	res;
+	std::set<std::string>		removeExts	(b.begin(), b.end());
+
+	for (const auto & aIter : a)
+	{
+		if (!de::contains(removeExts, aIter))
+			res.push_back(aIter);
+	}
+
+	return res;
+}
+
+// TODO: Potentially move this to vktTestCase.cpp when multi-queue support lands.
+static deUint32 findQueueFamilyIndexWithCaps (const InstanceInterface& vkInstance, VkPhysicalDevice physicalDevice, VkQueueFlags requiredCaps, VkQueueFlags excludedCaps = -1)
+{
+	const std::vector<VkQueueFamilyProperties>	queueProps	= getPhysicalDeviceQueueFamilyProperties(vkInstance, physicalDevice);
+
+	for (size_t queueNdx = 0; queueNdx < queueProps.size(); queueNdx++)
+	{
+		deUint32 queueFlags = queueProps[queueNdx].queueFlags;
+		if ((queueFlags & requiredCaps) == requiredCaps && !(queueFlags & excludedCaps))
+			return (deUint32)queueNdx;
+	}
+
+	TCU_THROW(NotSupportedError, "No matching queue found");
+}
+
+
+// Creates a device that has queues for graphics/compute capabilities
+// and compute or transfer capabilities without graphics.
+// FIXME:
+// There should be helpers further up the testing class hierarchy
+// where the details of whether VULKANSC is enabled or is
+// encapsulated. Worrying about in all the different test classes is
+// error-prone.
+Move<VkDevice> createCustomDevice (Context&								context,
+								   const QueueSelectionOptions		imageCreateOptions,
+#ifdef CTS_USES_VULKANSC
+								   const CustomInstance&				customInstance,
+#endif // CTS_USES_VULKANSC
+								   uint32_t&							queueFamilyIndex)
+{
+#ifdef CTS_USES_VULKANSC
+	const InstanceInterface&	instanceDriver		= customInstance.getDriver();
+	const VkPhysicalDevice		physicalDevice		= chooseDevice(instanceDriver, customInstance, context.getTestContext().getCommandLine());
+#else
+	const InstanceInterface&	instanceDriver		= context.getInstanceInterface();
+	const VkPhysicalDevice		physicalDevice		= context.getPhysicalDevice();
+#endif // CTS_USES_VULKANSC
+
+	const std::vector<VkQueueFamilyProperties>	queueFamilies = getPhysicalDeviceQueueFamilyProperties(context.getInstanceInterface(), context.getPhysicalDevice());
+
+	switch (imageCreateOptions)
+	{
+		case QueueSelectionOptions::Universal:
+			queueFamilyIndex = findQueueFamilyIndexWithCaps(instanceDriver, physicalDevice, VK_QUEUE_GRAPHICS_BIT|VK_QUEUE_COMPUTE_BIT);
+			break;
+		case QueueSelectionOptions::ComputeOnly:
+			queueFamilyIndex = findQueueFamilyIndexWithCaps(instanceDriver, physicalDevice, VK_QUEUE_COMPUTE_BIT, VK_QUEUE_GRAPHICS_BIT);
+			break;
+		case QueueSelectionOptions::TransferOnly:
+			queueFamilyIndex = findQueueFamilyIndexWithCaps(instanceDriver, physicalDevice, VK_QUEUE_TRANSFER_BIT, VK_QUEUE_GRAPHICS_BIT);
+			break;
+	}
+
+	// This must be found, findQueueFamilyIndexWithCaps would have
+	// thrown a NotSupported exception if the requested queue type did
+	// not exist. Similarly, this was written with the assumption the
+	// "alternative" queue would be different to the universal queue.
+	DE_ASSERT(queueFamilyIndex < queueFamilies.size() && queueFamilyIndex != context.getUniversalQueueFamilyIndex());
+
+	const float queuePriority = 1.0f;
+	const VkDeviceQueueCreateInfo deviceQueueCreateInfos[] = {
+		{
+			VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,		// VkStructureType				sType;
+			DE_NULL,										// const void*					pNext;
+			(VkDeviceQueueCreateFlags)0u,					// VkDeviceQueueCreateFlags		flags;
+			context.getUniversalQueueFamilyIndex(),			// uint32_t						queueFamilyIndex;
+			1u,												// uint32_t						queueCount;
+			&queuePriority,									// const float*					pQueuePriorities;
+		},
+		{
+			VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,		// VkStructureType				sType;
+			DE_NULL,										// const void*					pNext;
+			(VkDeviceQueueCreateFlags)0u,					// VkDeviceQueueCreateFlags		flags;
+			queueFamilyIndex,								// uint32_t						queueFamilyIndex;
+			1u,												// uint32_t						queueCount;
+			&queuePriority,									// const float*					pQueuePriorities;
+		}
+	};
+
+	// context.getDeviceExtensions() returns supported device extension including extensions that have been promoted to
+	// Vulkan core. The core extensions must be removed from the list.
+	std::vector<const char*>	coreExtensions;
+	getCoreDeviceExtensions(context.getUsedApiVersion(), coreExtensions);
+	std::vector<std::string> nonCoreExtensions(removeExtensions(context.getDeviceExtensions(), coreExtensions));
+
+	std::vector<const char*>	extensionNames;
+	extensionNames.reserve(nonCoreExtensions.size());
+	for (const std::string& extension : nonCoreExtensions)
+		extensionNames.push_back(extension.c_str());
+
+	const auto& deviceFeatures2 = context.getDeviceFeatures2();
+
+	const void *pNext = &deviceFeatures2;
+#ifdef CTS_USES_VULKANSC
+	VkDeviceObjectReservationCreateInfo memReservationInfo = context.getTestContext().getCommandLine().isSubProcess() ? context.getResourceInterface()->getStatMax() : resetDeviceObjectReservationCreateInfo();
+	memReservationInfo.pNext = pNext;
+	pNext = &memReservationInfo;
+
+	VkPipelineCacheCreateInfo			pcCI;
+	std::vector<VkPipelinePoolSize>		poolSizes;
+	if (context.getTestContext().getCommandLine().isSubProcess())
+	{
+		if (context.getResourceInterface()->getCacheDataSize() > 0)
+		{
+			pcCI =
+			{
+				VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO,			// VkStructureType				sType;
+				DE_NULL,												// const void*					pNext;
+				VK_PIPELINE_CACHE_CREATE_READ_ONLY_BIT |
+					VK_PIPELINE_CACHE_CREATE_USE_APPLICATION_STORAGE_BIT,	// VkPipelineCacheCreateFlags	flags;
+				context.getResourceInterface()->getCacheDataSize(),	// deUintptr					initialDataSize;
+				context.getResourceInterface()->getCacheData()		// const void*					pInitialData;
+			};
+			memReservationInfo.pipelineCacheCreateInfoCount		= 1;
+			memReservationInfo.pPipelineCacheCreateInfos		= &pcCI;
+		}
+		poolSizes							= context.getResourceInterface()->getPipelinePoolSizes();
+		if (!poolSizes.empty())
+		{
+			memReservationInfo.pipelinePoolSizeCount		= deUint32(poolSizes.size());
+			memReservationInfo.pPipelinePoolSizes			= poolSizes.data();
+		}
+	}
+#endif // CTS_USES_VULKANSC
+
+	const VkDeviceCreateInfo	deviceCreateInfo =
+	{
+		VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,			// VkStructureType					sType;
+		pNext,											// const void*						pNext;
+		(VkDeviceCreateFlags)0u,						// VkDeviceCreateFlags				flags;
+		DE_LENGTH_OF_ARRAY(deviceQueueCreateInfos),		// uint32_t							queueCreateInfoCount;
+		deviceQueueCreateInfos,							// const VkDeviceQueueCreateInfo*	pQueueCreateInfos;
+		0u,												// uint32_t							enabledLayerCount;
+		DE_NULL,										// const char* const*				ppEnabledLayerNames;
+		static_cast<uint32_t>(extensionNames.size()),	// uint32_t							enabledExtensionCount;
+		extensionNames.data(),							// const char* const*				ppEnabledExtensionNames;
+		DE_NULL,										// const VkPhysicalDeviceFeatures*	pEnabledFeatures;
+	};
+
+#ifndef CTS_USES_VULKANSC
+	return vkt::createCustomDevice(context.getTestContext().getCommandLine().isValidationEnabled(), context.getPlatformInterface(), context.getInstance(), instanceDriver, physicalDevice, &deviceCreateInfo);
+#else
+	return vkt::createCustomDevice(context.getTestContext().getCommandLine().isValidationEnabled(), context.getPlatformInterface(), customInstance, instanceDriver, physicalDevice, &deviceCreateInfo);
+#endif // CTS_USES_VULKANSC
+}
+
+// Copy levels from compressed mipmap images into a buffer.
+class CopyCompressedImageToBuffer final : public CopiesAndBlittingTestInstance
+{
+public:
+	CopyCompressedImageToBuffer			(Context&	context, TestParams	testParams, QueueSelectionOptions options);
+
+	virtual tcu::TestStatus		iterate						(void) override;
+
+	~CopyCompressedImageToBuffer()
+	{
+		// Destroy the command pool (and free the related command buffer).
+		// This must be done before the m_customDevice is destroyed.
+		m_cmdBuffer = Move<VkCommandBuffer>();
+		m_cmdPool = Move<VkCommandPool>();
+	}
+private:
+	// Not used in this subclass.
+	virtual void				copyRegionToTextureLevel	(tcu::ConstPixelBufferAccess, tcu::PixelBufferAccess, CopyRegion, deUint32) override { };
+
+	QueueSelectionOptions								m_options;
+	const CustomInstance								m_customInstance;
+#ifndef CTS_USES_VULKANSC
+	de::MovePtr<vk::DeviceDriver>						m_deviceDriver;
+#else
+	de::MovePtr<DeviceDriverSC, DeinitDeviceDeleter>	m_deviceDriver;
+#endif // CTS_USES_VULKANSC
+	Move<VkDevice>										m_customDevice;
+	de::MovePtr<vk::Allocator>							m_alternativeAllocator;
+
+	// Contains a randomly generated compressed texture pyramid.
+	using TestTexture2DSp = de::SharedPtr<pipeline::TestTexture2D>;
+	TestTexture2DSp										m_texture;
+	de::MovePtr<ImageWithMemory>						m_source;
+	de::MovePtr<BufferWithMemory>						m_sourceBuffer;
+	de::MovePtr<BufferWithMemory>						m_destination;
+};
+
+CopyCompressedImageToBuffer::CopyCompressedImageToBuffer (Context& context, TestParams testParams, QueueSelectionOptions options)
+	: CopiesAndBlittingTestInstance(context, testParams)
+	, m_options(options)
+	, m_customInstance				(createCustomInstanceFromContext(context))
+	, m_texture(TestTexture2DSp(new pipeline::TestTexture2D(mapVkCompressedFormat(testParams.src.image.format), testParams.src.image.extent.width, testParams.src.image.extent.height)))
+{
+}
+
+tcu::TestStatus CopyCompressedImageToBuffer::iterate (void)
+{
+#ifdef CTS_USES_VULKANSC
+	const InstanceInterface&	vki	= m_customInstance.getDriver();
+#else
+	const InstanceInterface&	vki	= m_context.getInstanceInterface();
+#endif // CTS_USES_VULKANSC
+
+	const bool	useTwoQueues		= m_options != QueueSelectionOptions::Universal;
+	uint32_t	queueFamilyIndex	= m_context.getUniversalQueueFamilyIndex();
+	// Create custom device for compute and transfer only queue tests.
+	if (useTwoQueues)
+	{
+		// 'queueFamilyIndex' will be updated in 'createCustomDevice()' to match the requested queue type.
+#ifdef CTS_USES_VULKANSC
+		m_customDevice				= createCustomDevice(m_context, m_options, m_customInstance, queueFamilyIndex);
+#else
+		m_customDevice				= createCustomDevice(m_context, m_options, queueFamilyIndex);
+#endif // CTS_USES_VULKANSC
+		m_device					= m_customDevice.get();
+
+#ifndef CTS_USES_VULKANSC
+		m_deviceDriver = de::MovePtr<DeviceDriver>(new DeviceDriver(m_context.getPlatformInterface(), m_customInstance, m_device));
+#else
+		m_deviceDriver = de::MovePtr<DeviceDriverSC, DeinitDeviceDeleter>(new DeviceDriverSC(m_context.getPlatformInterface(), m_customInstance, m_device, m_context.getTestContext().getCommandLine(), m_context.getResourceInterface(), m_context.getDeviceVulkanSC10Properties(), m_context.getDeviceProperties()), vk::DeinitDeviceDeleter(m_context.getResourceInterface().get(), m_device));
+#endif // CTS_USES_VULKANSC
+	}
+	m_queue						= getDeviceQueue(m_context.getDeviceInterface(), m_device, queueFamilyIndex, 0u);
+
+#ifndef CTS_USES_VULKANSC
+	const DeviceInterface&	vk		= m_context.getDeviceInterface();
+#else
+	const DeviceInterface&	vk		= (DE_NULL != m_deviceDriver) ? *m_deviceDriver : m_context.getDeviceInterface();
+#endif // CTS_USES_VULKANSC
+
+	m_alternativeAllocator			= de::MovePtr<Allocator>(new SimpleAllocator(vk, m_device, getPhysicalDeviceMemoryProperties(vki, m_context.getPhysicalDevice())));
+	m_allocator						= m_alternativeAllocator.get();
+
+	// Release the command buffer allocated in the base class.
+	m_cmdBuffer						= Move<VkCommandBuffer>();
+	m_cmdPool						= createCommandPool(vk, m_device, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, queueFamilyIndex);
+	m_cmdBuffer						= allocateCommandBuffer(vk, m_device, *m_cmdPool, VK_COMMAND_BUFFER_LEVEL_PRIMARY);
+
+	const VkDevice					vkDevice			= m_device;
+	const VkQueue					queue				= m_queue;
+	const VkCommandBuffer			commandBuffer		= m_cmdBuffer.get();
+	const VkCommandPool				commandPool			= m_cmdPool.get();
+	Allocator&						memAlloc			= *m_allocator;
+	const ImageParms&				srcImageParams		= m_params.src.image;
+
+	// Create source image, containing all the mip levels.
+	{
+		const VkImageCreateInfo		sourceImageParams		=
+		{
+			VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,	// VkStructureType		sType;
+			DE_NULL,								// const void*			pNext;
+			getCreateFlags(m_params.src.image),		// VkImageCreateFlags	flags;
+			m_params.src.image.imageType,			// VkImageType			imageType;
+			m_params.src.image.format,				// VkFormat				format;
+			m_params.src.image.extent,				// VkExtent3D			extent;
+			(deUint32)m_texture->getNumLevels(),	// deUint32				mipLevels;
+			getArraySize(m_params.src.image),		// deUint32				arraySize;
+			VK_SAMPLE_COUNT_1_BIT,					// deUint32				samples;
+			VK_IMAGE_TILING_OPTIMAL,				// VkImageTiling		tiling;
+			VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+				VK_IMAGE_USAGE_TRANSFER_DST_BIT,	// VkImageUsageFlags	usage;
+			VK_SHARING_MODE_EXCLUSIVE,				// VkSharingMode		sharingMode;
+			0u,										// deUint32				queueFamilyIndexCount;
+			(const deUint32*)DE_NULL,				// const deUint32*		pQueueFamilyIndices;
+			VK_IMAGE_LAYOUT_UNDEFINED,				// VkImageLayout		initialLayout;
+		};
+
+		m_source = de::MovePtr<ImageWithMemory>(new ImageWithMemory(vk, vkDevice, memAlloc, sourceImageParams, vk::MemoryRequirement::Any));
+	}
+
+	// Upload the compressed image.
+	// FIXME: This could be a utility.
+	//    pipeline::uploadTestTexture(vk, vkDevice, queue, queueFamilyIndex, memAlloc, *m_texture, m_source->get(), vk::VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+	// Does not allow using an external command pool, the utilities there could fruitfully be generalised.
+	m_sourceBuffer = de::MovePtr<BufferWithMemory>(new BufferWithMemory(vk, vkDevice, memAlloc, makeBufferCreateInfo(m_texture->getCompressedSize(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT), vk::MemoryRequirement::HostVisible));
+	m_texture->write(reinterpret_cast<deUint8*>(m_sourceBuffer->getAllocation().getHostPtr()));
+	flushAlloc(vk, vkDevice, m_sourceBuffer->getAllocation());
+	std::vector<VkBufferImageCopy>	copyRegions			= m_texture->getBufferCopyRegions();
+	copyBufferToImage(vk, vkDevice, queue, queueFamilyIndex, m_sourceBuffer->get(), m_texture->getCompressedSize(), copyRegions, nullptr, VK_IMAGE_ASPECT_COLOR_BIT, m_texture->getNumLevels(), m_texture->getArraySize(), m_source->get(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT, &commandPool, 0);
+
+	// Copy each miplevel of the uploaded image into a buffer, and
+	// check the buffer matches the appropriate test texture level.
+	for (deUint32 mipLevelToCheckIdx = 0; mipLevelToCheckIdx < (deUint32)m_texture->getNumLevels(); mipLevelToCheckIdx++)
+	{
+		const tcu::CompressedTexture compressedMipLevelToCheck = m_texture->getCompressedLevel(mipLevelToCheckIdx, 0);
+		deUint32 bufferSize = compressedMipLevelToCheck.getDataSize();
+
+		m_destination = de::MovePtr<BufferWithMemory>(new BufferWithMemory(vk, vkDevice, memAlloc, makeBufferCreateInfo(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT), MemoryRequirement::HostVisible));
+
+		// Clear the buffer to zero before copying into it.
+		deMemset(m_destination->getAllocation().getHostPtr(), 0, bufferSize);
+		flushAlloc(vk, vkDevice, m_destination->getAllocation());
+
+		// Barrier to get the source image's selected mip level in the right format for transfer.
+		const auto imageBarrier = makeImageMemoryBarrier(VK_ACCESS_TRANSFER_WRITE_BIT,
+			VK_ACCESS_TRANSFER_READ_BIT,
+			VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			m_source->get(),
+			{											// VkImageSubresourceRange	subresourceRange;
+				VK_IMAGE_ASPECT_COLOR_BIT,				// VkImageAspectFlags	aspectMask;
+				mipLevelToCheckIdx,						// deUint32				baseMipLevel;
+				1,										// deUint32				mipLevels;
+				0u,										// deUint32				baseArraySlice;
+				getArraySize(m_params.src.image)		// deUint32				arraySize;
+			});
+
+		// Barrier to wait for the transfer from image to buffer to complete.
+		const auto bufferBarrier = makeBufferMemoryBarrier(VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT, m_destination->get(), 0, bufferSize);
+
+		// Copy from image to buffer
+		VkBufferImageCopy copyRegion;
+		copyRegion = makeBufferImageCopy(mipLevelExtents(srcImageParams.extent, mipLevelToCheckIdx), makeImageSubresourceLayers(VK_IMAGE_ASPECT_COLOR_BIT, mipLevelToCheckIdx, 0, 1));
+
+		std::vector<VkBufferImageCopy>		bufferImageCopies;
+		std::vector<VkBufferImageCopy2KHR>	bufferImageCopies2KHR;
+		if (m_params.extensionUse == EXTENSION_USE_NONE)
+		{
+			bufferImageCopies.push_back(copyRegion);
+		}
+#ifndef CTS_USES_VULKANSC
+		else
+		{
+			DE_ASSERT(m_params.extensionUse == EXTENSION_USE_COPY_COMMANDS2);
+			bufferImageCopies2KHR.push_back(convertvkBufferImageCopyTovkBufferImageCopy2KHR(copyRegion));
+		}
+#endif
+
+		beginCommandBuffer(vk, commandBuffer);
+		// Transition the selected miplevel to the right format for the transfer.
+		vk.cmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, (VkDependencyFlags)0, 0, (const VkMemoryBarrier*)DE_NULL, 0, (const VkBufferMemoryBarrier*)DE_NULL, 1, &imageBarrier);
+
+		// Copy the mip level to the buffer.
+		if (m_params.extensionUse == EXTENSION_USE_NONE)
+		{
+			vk.cmdCopyImageToBuffer(commandBuffer, m_source->get(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, m_destination->get(), (deUint32)bufferImageCopies.size(), &bufferImageCopies[0]);
+		}
+#ifndef CTS_USES_VULKANSC
+		else
+		{
+			DE_ASSERT(m_params.extensionUse == EXTENSION_USE_COPY_COMMANDS2);
+			const VkCopyImageToBufferInfo2KHR copyImageToBufferInfo2KHR =
+			{
+				VK_STRUCTURE_TYPE_COPY_IMAGE_TO_BUFFER_INFO_2_KHR,	// VkStructureType				sType;
+				DE_NULL,											// const void*					pNext;
+				m_source->get(),										// VkImage						srcImage;
+				VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,				// VkImageLayout				srcImageLayout;
+				m_destination->get(),								// VkBuffer						dstBuffer;
+				(deUint32)bufferImageCopies2KHR.size(),					// uint32_t						regionCount;
+				&bufferImageCopies2KHR[0]							// const VkBufferImageCopy2KHR*	pRegions;
+			};
+
+			vk.cmdCopyImageToBuffer2(commandBuffer, &copyImageToBufferInfo2KHR);
+		}
+#endif // CTS_USES_VULKANSC
+
+		// Prepare to read from the host visible barrier.
+		vk.cmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, (VkDependencyFlags)0, 0, (const VkMemoryBarrier*)DE_NULL, 1, &bufferBarrier, 0, (const VkImageMemoryBarrier*)DE_NULL);
+		endCommandBuffer(vk, commandBuffer);
+
+		submitCommandsAndWait (vk, vkDevice, queue, commandBuffer);
+		m_context.resetCommandPoolForVKSC(vkDevice, commandPool);
+
+		// Read and compare buffer data.
+		const deUint8* referenceData = (deUint8 *)compressedMipLevelToCheck.getData();
+		const deUint8* resultData = (uint8_t *)m_destination->getAllocation().getHostPtr();
+		int result = deMemCmp(referenceData, resultData, compressedMipLevelToCheck.getDataSize());
+		if (result != 0)
+		{
+			std::ostringstream msg;
+			msg << "Incorrect data retrieved for mip level " << mipLevelToCheckIdx << " - extents (" << compressedMipLevelToCheck.getWidth() << ", " << compressedMipLevelToCheck.getHeight() << ")";
+			return tcu::TestStatus::fail(msg.str());
+		}
+	}
+
+	return tcu::TestStatus::pass("OK");
+}
+
+class CopyCompressedImageToBufferTestCase : public vkt::TestCase
+{
+public:
+	CopyCompressedImageToBufferTestCase	(tcu::TestContext&		testCtx,
+										 const std::string&		name,
+										 const std::string&		description,
+										 const TestParams		params,
+										 QueueSelectionOptions options)
+	: vkt::TestCase	(testCtx, name, description)
+		, m_params		(params)
+		, m_options		(options)
+	{ }
+
+	virtual TestInstance*	createInstance				(Context&				context) const
+							{
+								return new CopyCompressedImageToBuffer(context, m_params, m_options);
+							}
+	virtual void			checkSupport				(Context&				context) const;
+private:
+	TestParams				m_params;
+	QueueSelectionOptions	m_options;
+};
+
+void CopyCompressedImageToBufferTestCase::checkSupport(Context& context) const
+{
+	DE_ASSERT(m_params.src.image.tiling == VK_IMAGE_TILING_OPTIMAL);
+	DE_ASSERT(m_params.src.image.imageType == vk::VK_IMAGE_TYPE_2D);
+
+	if ((m_params.extensionUse == EXTENSION_USE_COPY_COMMANDS2) && (!context.isDeviceFunctionalitySupported("VK_KHR_copy_commands2")))
+	{
+		TCU_THROW(NotSupportedError, "VK_KHR_copy_commands2 is not supported");
+	}
+
+	VkFormatProperties formatProps;
+	context.getInstanceInterface().getPhysicalDeviceFormatProperties(context.getPhysicalDevice(), m_params.src.image.format, &formatProps);
+
+	VkImageFormatProperties imageFormatProperties;
+
+	const auto& instance = context.getInstanceInterface();
+	if (instance.getPhysicalDeviceImageFormatProperties(context.getPhysicalDevice(),
+														m_params.src.image.format,
+														m_params.src.image.imageType,
+														VK_IMAGE_TILING_OPTIMAL,
+														VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+														0,
+														&imageFormatProperties) == VK_ERROR_FORMAT_NOT_SUPPORTED)
+	{
+		TCU_THROW(NotSupportedError, "Format not supported");
+	}
+
+
+	if (!(formatProps.optimalTilingFeatures & VK_FORMAT_FEATURE_TRANSFER_SRC_BIT))
+		TCU_THROW(NotSupportedError, "TRANSFER_SRC is not supported on this image type");
 }
 
 // Copy from buffer to image.
@@ -5448,151 +5894,6 @@ enum ResolveImageToImageOptions{NO_OPTIONAL_OPERATION = 0,
 								COPY_MS_IMAGE_TO_MS_IMAGE_COMPUTE,
 								COPY_MS_IMAGE_TO_MS_IMAGE_TRANSFER};
 
-std::vector<std::string> removeExtensions (const std::vector<std::string>& a, const std::vector<const char*>& b)
-{
-	std::vector<std::string>	res;
-	std::set<std::string>		removeExts	(b.begin(), b.end());
-
-	for (const auto & aIter : a)
-	{
-		if (!de::contains(removeExts, aIter))
-			res.push_back(aIter);
-	}
-
-	return res;
-}
-
-
-// Creates a device that has queues for graphics/compute capabilities and compute or transfer capabilities without graphics.
-Move<VkDevice> createCustomDevice (Context&								context,
-								   const ResolveImageToImageOptions		imageCreateOptions,
-#ifdef CTS_USES_VULKANSC
-								   const CustomInstance&				customInstance,
-#endif // CTS_USES_VULKANSC
-								   uint32_t&							queueFamilyIndex)
-{
-#ifdef CTS_USES_VULKANSC
-	const InstanceInterface&	instanceDriver		= customInstance.getDriver();
-	const VkPhysicalDevice		physicalDevice		= chooseDevice(instanceDriver, customInstance, context.getTestContext().getCommandLine());
-#else
-	const InstanceInterface&	instanceDriver		= context.getInstanceInterface();
-	const VkPhysicalDevice		physicalDevice		= context.getPhysicalDevice();
-#endif // CTS_USES_VULKANSC
-
-	// This function can only be used to create a device with compute only or transfer only queue.
-	DE_ASSERT(imageCreateOptions == COPY_MS_IMAGE_TO_MS_IMAGE_COMPUTE || imageCreateOptions == COPY_MS_IMAGE_TO_MS_IMAGE_TRANSFER);
-
-	// When testing with compute or transfer queue, find a queue family that supports compute or transfer queue, but does NOT support graphics queue.
-	const std::vector<VkQueueFamilyProperties>	queueFamilies = getPhysicalDeviceQueueFamilyProperties(context.getInstanceInterface(), context.getPhysicalDevice());
-
-	queueFamilyIndex = 0;
-	for (const auto &queueFamily: queueFamilies)
-	{
-		if (imageCreateOptions == COPY_MS_IMAGE_TO_MS_IMAGE_COMPUTE)
-		{
-			if (queueFamily.queueFlags & VK_QUEUE_COMPUTE_BIT && !(queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT))
-				break;
-			else
-				queueFamilyIndex++;
-		}
-		else if (imageCreateOptions == COPY_MS_IMAGE_TO_MS_IMAGE_TRANSFER)
-		{
-			if (queueFamily.queueFlags & VK_QUEUE_TRANSFER_BIT && !(queueFamily.queueFlags & VK_QUEUE_COMPUTE_BIT) && !(queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT))
-				break;
-			else
-				queueFamilyIndex++;
-		}
-	}
-
-	// One should be found, because this is checked in "checkSupport" function.
-	DE_ASSERT(queueFamilyIndex < queueFamilies.size());
-
-	const float queuePriority = 1.0f;
-	const VkDeviceQueueCreateInfo deviceQueueCreateInfos[] = {
-		{
-			VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,		// VkStructureType				sType;
-			DE_NULL,										// const void*					pNext;
-			(VkDeviceQueueCreateFlags)0u,					// VkDeviceQueueCreateFlags		flags;
-			context.getUniversalQueueFamilyIndex(),			// uint32_t						queueFamilyIndex;
-			1u,												// uint32_t						queueCount;
-			&queuePriority,									// const float*					pQueuePriorities;
-		},
-		{
-			VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,		// VkStructureType				sType;
-			DE_NULL,										// const void*					pNext;
-			(VkDeviceQueueCreateFlags)0u,					// VkDeviceQueueCreateFlags		flags;
-			queueFamilyIndex,								// uint32_t						queueFamilyIndex;
-			1u,												// uint32_t						queueCount;
-			&queuePriority,									// const float*					pQueuePriorities;
-		}
-	};
-
-	// context.getDeviceExtensions() returns supported device extension including extensions that have been promoted to
-	// Vulkan core. The core extensions must be removed from the list.
-	std::vector<const char*>	coreExtensions;
-	getCoreDeviceExtensions(context.getUsedApiVersion(), coreExtensions);
-	std::vector<std::string> nonCoreExtensions(removeExtensions(context.getDeviceExtensions(), coreExtensions));
-
-	std::vector<const char*>	extensionNames;
-	extensionNames.reserve(nonCoreExtensions.size());
-	for (const std::string& extension : nonCoreExtensions)
-		extensionNames.push_back(extension.c_str());
-
-	const auto& deviceFeatures2 = context.getDeviceFeatures2();
-
-	const void *pNext = &deviceFeatures2;
-#ifdef CTS_USES_VULKANSC
-	VkDeviceObjectReservationCreateInfo memReservationInfo = context.getTestContext().getCommandLine().isSubProcess() ? context.getResourceInterface()->getStatMax() : resetDeviceObjectReservationCreateInfo();
-	memReservationInfo.pNext = pNext;
-	pNext = &memReservationInfo;
-
-	VkPipelineCacheCreateInfo			pcCI;
-	std::vector<VkPipelinePoolSize>		poolSizes;
-	if (context.getTestContext().getCommandLine().isSubProcess())
-	{
-		if (context.getResourceInterface()->getCacheDataSize() > 0)
-		{
-			pcCI =
-			{
-				VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO,			// VkStructureType				sType;
-				DE_NULL,												// const void*					pNext;
-				VK_PIPELINE_CACHE_CREATE_READ_ONLY_BIT |
-					VK_PIPELINE_CACHE_CREATE_USE_APPLICATION_STORAGE_BIT,	// VkPipelineCacheCreateFlags	flags;
-				context.getResourceInterface()->getCacheDataSize(),	// deUintptr					initialDataSize;
-				context.getResourceInterface()->getCacheData()		// const void*					pInitialData;
-			};
-			memReservationInfo.pipelineCacheCreateInfoCount		= 1;
-			memReservationInfo.pPipelineCacheCreateInfos		= &pcCI;
-		}
-		poolSizes							= context.getResourceInterface()->getPipelinePoolSizes();
-		if (!poolSizes.empty())
-		{
-			memReservationInfo.pipelinePoolSizeCount		= deUint32(poolSizes.size());
-			memReservationInfo.pPipelinePoolSizes			= poolSizes.data();
-		}
-	}
-#endif // CTS_USES_VULKANSC
-
-	const VkDeviceCreateInfo	deviceCreateInfo =
-	{
-		VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,			// VkStructureType					sType;
-		pNext,											// const void*						pNext;
-		(VkDeviceCreateFlags)0u,						// VkDeviceCreateFlags				flags;
-		DE_LENGTH_OF_ARRAY(deviceQueueCreateInfos),		// uint32_t							queueCreateInfoCount;
-		deviceQueueCreateInfos,							// const VkDeviceQueueCreateInfo*	pQueueCreateInfos;
-		0u,												// uint32_t							enabledLayerCount;
-		DE_NULL,										// const char* const*				ppEnabledLayerNames;
-		static_cast<uint32_t>(extensionNames.size()),	// uint32_t							enabledExtensionCount;
-		extensionNames.data(),							// const char* const*				ppEnabledExtensionNames;
-		DE_NULL,										// const VkPhysicalDeviceFeatures*	pEnabledFeatures;
-	};
-
-#ifndef CTS_USES_VULKANSC
-	return vkt::createCustomDevice(context.getTestContext().getCommandLine().isValidationEnabled(), context.getPlatformInterface(), context.getInstance(), instanceDriver, physicalDevice, &deviceCreateInfo);
-#else
-	return vkt::createCustomDevice(context.getTestContext().getCommandLine().isValidationEnabled(), context.getPlatformInterface(), customInstance, instanceDriver, physicalDevice, &deviceCreateInfo);
-#endif // CTS_USES_VULKANSC
-}
 
 class ResolveImageToImage : public CopiesAndBlittingTestInstance
 {
@@ -5663,15 +5964,15 @@ ResolveImageToImage::ResolveImageToImage (Context& context, TestParams params, c
 	const InstanceInterface&	vki						= m_context.getInstanceInterface();
 #endif // CTS_USES_VULKANSC
 
-		uint32_t queueFamilyIndex		= 0;
+	uint32_t queueFamilyIndex		= 0;
 	// Create custom device for compute and transfer only queue tests.
 	if (m_options == COPY_MS_IMAGE_TO_MS_IMAGE_COMPUTE || m_options == COPY_MS_IMAGE_TO_MS_IMAGE_TRANSFER)
 	{
 		// 'queueFamilyIndex' will be updated in 'createCustomDevice()' to match the requested queue type.
 #ifdef CTS_USES_VULKANSC
-		m_customDevice					= createCustomDevice(context, m_options, m_customInstance, queueFamilyIndex);
+		m_customDevice					= createCustomDevice(context, (m_options == COPY_MS_IMAGE_TO_MS_IMAGE_COMPUTE) ? QueueSelectionOptions::ComputeOnly : QueueSelectionOptions::TransferOnly, m_customInstance, queueFamilyIndex);
 #else
-		m_customDevice					= createCustomDevice(context, m_options, queueFamilyIndex);
+		m_customDevice					= createCustomDevice(context, (m_options == COPY_MS_IMAGE_TO_MS_IMAGE_COMPUTE) ? QueueSelectionOptions::ComputeOnly : QueueSelectionOptions::TransferOnly, queueFamilyIndex);
 #endif // CTS_USES_VULKANSC
 		m_device						= m_customDevice.get();
 
@@ -9161,6 +9462,222 @@ const VkFormat*	colorImageFormatsToTest[]	=
 	compatibleFormats256Bit
 };
 
+const VkFormat	compatibleFormatsUInts[]	=
+{
+	VK_FORMAT_R8_UINT,
+	VK_FORMAT_R8G8_UINT,
+	VK_FORMAT_R8G8B8_UINT,
+	VK_FORMAT_B8G8R8_UINT,
+	VK_FORMAT_R8G8B8A8_UINT,
+	VK_FORMAT_B8G8R8A8_UINT,
+	VK_FORMAT_A8B8G8R8_UINT_PACK32,
+	VK_FORMAT_A2R10G10B10_UINT_PACK32,
+	VK_FORMAT_A2B10G10R10_UINT_PACK32,
+	VK_FORMAT_R16_UINT,
+	VK_FORMAT_R16G16_UINT,
+	VK_FORMAT_R16G16B16_UINT,
+	VK_FORMAT_R16G16B16A16_UINT,
+	VK_FORMAT_R32_UINT,
+	VK_FORMAT_R32G32_UINT,
+	VK_FORMAT_R32G32B32_UINT,
+	VK_FORMAT_R32G32B32A32_UINT,
+	VK_FORMAT_R64_UINT,
+	VK_FORMAT_R64G64_UINT,
+	VK_FORMAT_R64G64B64_UINT,
+	VK_FORMAT_R64G64B64A64_UINT,
+
+	VK_FORMAT_UNDEFINED
+};
+const VkFormat	compatibleFormatsSInts[]	=
+{
+	VK_FORMAT_R8_SINT,
+	VK_FORMAT_R8G8_SINT,
+	VK_FORMAT_R8G8B8_SINT,
+	VK_FORMAT_B8G8R8_SINT,
+	VK_FORMAT_R8G8B8A8_SINT,
+	VK_FORMAT_B8G8R8A8_SINT,
+	VK_FORMAT_A8B8G8R8_SINT_PACK32,
+	VK_FORMAT_A2R10G10B10_SINT_PACK32,
+	VK_FORMAT_A2B10G10R10_SINT_PACK32,
+	VK_FORMAT_R16_SINT,
+	VK_FORMAT_R16G16_SINT,
+	VK_FORMAT_R16G16B16_SINT,
+	VK_FORMAT_R16G16B16A16_SINT,
+	VK_FORMAT_R32_SINT,
+	VK_FORMAT_R32G32_SINT,
+	VK_FORMAT_R32G32B32_SINT,
+	VK_FORMAT_R32G32B32A32_SINT,
+	VK_FORMAT_R64_SINT,
+	VK_FORMAT_R64G64_SINT,
+	VK_FORMAT_R64G64B64_SINT,
+	VK_FORMAT_R64G64B64A64_SINT,
+
+	VK_FORMAT_UNDEFINED
+};
+const VkFormat	compatibleFormatsFloats[]	=
+{
+	VK_FORMAT_R4G4_UNORM_PACK8,
+	VK_FORMAT_R4G4B4A4_UNORM_PACK16,
+	VK_FORMAT_B4G4R4A4_UNORM_PACK16,
+	VK_FORMAT_R5G6B5_UNORM_PACK16,
+	VK_FORMAT_B5G6R5_UNORM_PACK16,
+	VK_FORMAT_R5G5B5A1_UNORM_PACK16,
+	VK_FORMAT_B5G5R5A1_UNORM_PACK16,
+	VK_FORMAT_A1R5G5B5_UNORM_PACK16,
+	VK_FORMAT_R8_UNORM,
+	VK_FORMAT_R8_SNORM,
+	VK_FORMAT_R8_USCALED,
+	VK_FORMAT_R8_SSCALED,
+	VK_FORMAT_R8G8_UNORM,
+	VK_FORMAT_R8G8_SNORM,
+	VK_FORMAT_R8G8_USCALED,
+	VK_FORMAT_R8G8_SSCALED,
+	VK_FORMAT_R8G8B8_UNORM,
+	VK_FORMAT_R8G8B8_SNORM,
+	VK_FORMAT_R8G8B8_USCALED,
+	VK_FORMAT_R8G8B8_SSCALED,
+	VK_FORMAT_B8G8R8_UNORM,
+	VK_FORMAT_B8G8R8_SNORM,
+	VK_FORMAT_B8G8R8_USCALED,
+	VK_FORMAT_B8G8R8_SSCALED,
+	VK_FORMAT_R8G8B8A8_UNORM,
+	VK_FORMAT_R8G8B8A8_SNORM,
+	VK_FORMAT_R8G8B8A8_USCALED,
+	VK_FORMAT_R8G8B8A8_SSCALED,
+	VK_FORMAT_B8G8R8A8_UNORM,
+	VK_FORMAT_B8G8R8A8_SNORM,
+	VK_FORMAT_B8G8R8A8_USCALED,
+	VK_FORMAT_B8G8R8A8_SSCALED,
+	VK_FORMAT_A8B8G8R8_UNORM_PACK32,
+	VK_FORMAT_A8B8G8R8_SNORM_PACK32,
+	VK_FORMAT_A8B8G8R8_USCALED_PACK32,
+	VK_FORMAT_A8B8G8R8_SSCALED_PACK32,
+	VK_FORMAT_A2R10G10B10_UNORM_PACK32,
+	VK_FORMAT_A2R10G10B10_SNORM_PACK32,
+	VK_FORMAT_A2R10G10B10_USCALED_PACK32,
+	VK_FORMAT_A2R10G10B10_SSCALED_PACK32,
+	VK_FORMAT_A2B10G10R10_UNORM_PACK32,
+	VK_FORMAT_A2B10G10R10_SNORM_PACK32,
+	VK_FORMAT_A2B10G10R10_USCALED_PACK32,
+	VK_FORMAT_A2B10G10R10_SSCALED_PACK32,
+	VK_FORMAT_R16_UNORM,
+	VK_FORMAT_R16_SNORM,
+	VK_FORMAT_R16_USCALED,
+	VK_FORMAT_R16_SSCALED,
+	VK_FORMAT_R16_SFLOAT,
+	VK_FORMAT_R16G16_UNORM,
+	VK_FORMAT_R16G16_SNORM,
+	VK_FORMAT_R16G16_USCALED,
+	VK_FORMAT_R16G16_SSCALED,
+	VK_FORMAT_R16G16_SFLOAT,
+	VK_FORMAT_R16G16B16_UNORM,
+	VK_FORMAT_R16G16B16_SNORM,
+	VK_FORMAT_R16G16B16_USCALED,
+	VK_FORMAT_R16G16B16_SSCALED,
+	VK_FORMAT_R16G16B16_SFLOAT,
+	VK_FORMAT_R16G16B16A16_UNORM,
+	VK_FORMAT_R16G16B16A16_SNORM,
+	VK_FORMAT_R16G16B16A16_USCALED,
+	VK_FORMAT_R16G16B16A16_SSCALED,
+	VK_FORMAT_R16G16B16A16_SFLOAT,
+	VK_FORMAT_R32_SFLOAT,
+	VK_FORMAT_R32G32_SFLOAT,
+	VK_FORMAT_R32G32B32_SFLOAT,
+	VK_FORMAT_R32G32B32A32_SFLOAT,
+	VK_FORMAT_R64_SFLOAT,
+	VK_FORMAT_R64G64_SFLOAT,
+	VK_FORMAT_R64G64B64_SFLOAT,
+	VK_FORMAT_R64G64B64A64_SFLOAT,
+	VK_FORMAT_B10G11R11_UFLOAT_PACK32,
+	VK_FORMAT_E5B9G9R9_UFLOAT_PACK32,
+
+	VK_FORMAT_A4R4G4B4_UNORM_PACK16_EXT,
+	VK_FORMAT_A4B4G4R4_UNORM_PACK16_EXT,
+
+	VK_FORMAT_R10X6G10X6B10X6A10X6_UNORM_4PACK16,
+
+	VK_FORMAT_UNDEFINED
+};
+
+const VkFormat	compressedFormatsFloats[] =
+{
+	VK_FORMAT_BC1_RGB_UNORM_BLOCK,
+	VK_FORMAT_BC1_RGBA_UNORM_BLOCK,
+	VK_FORMAT_BC2_UNORM_BLOCK,
+	VK_FORMAT_BC3_UNORM_BLOCK,
+	VK_FORMAT_BC4_UNORM_BLOCK,
+	VK_FORMAT_BC4_SNORM_BLOCK,
+	VK_FORMAT_BC5_UNORM_BLOCK,
+	VK_FORMAT_BC5_SNORM_BLOCK,
+	VK_FORMAT_BC6H_UFLOAT_BLOCK,
+	VK_FORMAT_BC6H_SFLOAT_BLOCK,
+	VK_FORMAT_BC7_UNORM_BLOCK,
+	VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK,
+	VK_FORMAT_ETC2_R8G8B8A1_UNORM_BLOCK,
+	VK_FORMAT_ETC2_R8G8B8A8_UNORM_BLOCK,
+	VK_FORMAT_EAC_R11_UNORM_BLOCK,
+	VK_FORMAT_EAC_R11_SNORM_BLOCK,
+	VK_FORMAT_EAC_R11G11_UNORM_BLOCK,
+	VK_FORMAT_EAC_R11G11_SNORM_BLOCK,
+	VK_FORMAT_ASTC_4x4_UNORM_BLOCK,
+	VK_FORMAT_ASTC_5x4_UNORM_BLOCK,
+	VK_FORMAT_ASTC_5x5_UNORM_BLOCK,
+	VK_FORMAT_ASTC_6x5_UNORM_BLOCK,
+	VK_FORMAT_ASTC_6x6_UNORM_BLOCK,
+	VK_FORMAT_ASTC_8x5_UNORM_BLOCK,
+	VK_FORMAT_ASTC_8x6_UNORM_BLOCK,
+	VK_FORMAT_ASTC_8x8_UNORM_BLOCK,
+	VK_FORMAT_ASTC_10x5_UNORM_BLOCK,
+	VK_FORMAT_ASTC_10x6_UNORM_BLOCK,
+	VK_FORMAT_ASTC_10x8_UNORM_BLOCK,
+	VK_FORMAT_ASTC_10x10_UNORM_BLOCK,
+	VK_FORMAT_ASTC_12x10_UNORM_BLOCK,
+	VK_FORMAT_ASTC_12x12_UNORM_BLOCK,
+
+	VK_FORMAT_UNDEFINED
+};
+
+const VkFormat	compatibleFormatsSrgb[]		=
+{
+	VK_FORMAT_R8_SRGB,
+	VK_FORMAT_R8G8_SRGB,
+	VK_FORMAT_R8G8B8_SRGB,
+	VK_FORMAT_B8G8R8_SRGB,
+	VK_FORMAT_R8G8B8A8_SRGB,
+	VK_FORMAT_B8G8R8A8_SRGB,
+	VK_FORMAT_A8B8G8R8_SRGB_PACK32,
+
+	VK_FORMAT_UNDEFINED
+};
+
+const VkFormat	compressedFormatsSrgb[] =
+{
+	VK_FORMAT_BC1_RGB_SRGB_BLOCK,
+	VK_FORMAT_BC1_RGBA_SRGB_BLOCK,
+	VK_FORMAT_BC2_SRGB_BLOCK,
+	VK_FORMAT_BC3_SRGB_BLOCK,
+	VK_FORMAT_BC7_SRGB_BLOCK,
+	VK_FORMAT_ETC2_R8G8B8_SRGB_BLOCK,
+	VK_FORMAT_ETC2_R8G8B8A1_SRGB_BLOCK,
+	VK_FORMAT_ETC2_R8G8B8A8_SRGB_BLOCK,
+	VK_FORMAT_ASTC_4x4_SRGB_BLOCK,
+	VK_FORMAT_ASTC_5x4_SRGB_BLOCK,
+	VK_FORMAT_ASTC_5x5_SRGB_BLOCK,
+	VK_FORMAT_ASTC_6x5_SRGB_BLOCK,
+	VK_FORMAT_ASTC_6x6_SRGB_BLOCK,
+	VK_FORMAT_ASTC_8x5_SRGB_BLOCK,
+	VK_FORMAT_ASTC_8x6_SRGB_BLOCK,
+	VK_FORMAT_ASTC_8x8_SRGB_BLOCK,
+	VK_FORMAT_ASTC_10x5_SRGB_BLOCK,
+	VK_FORMAT_ASTC_10x6_SRGB_BLOCK,
+	VK_FORMAT_ASTC_10x8_SRGB_BLOCK,
+	VK_FORMAT_ASTC_10x10_SRGB_BLOCK,
+	VK_FORMAT_ASTC_12x10_SRGB_BLOCK,
+	VK_FORMAT_ASTC_12x12_SRGB_BLOCK,
+
+	VK_FORMAT_UNDEFINED
+};
+
 const VkFormat	dedicatedAllocationImageToImageFormatsToTest[]	=
 {
 	// From compatibleFormats8Bit
@@ -11241,13 +11758,40 @@ void add2dImageToBufferTests (tcu::TestCaseGroup* group, AllocationKind allocati
 		}
 		group->addChild(new CopyImageToBufferTestCase(testCtx, "array_tightly_sized_buffer", "Copy each layer from array to tightly sized buffer", params));
 	}
+
+
+	{
+		VkExtent3D extents[] = {
+			// Most miplevels will be multiples of four. All power-of-2 edge sizes. Never a weird mip level with extents smaller than the blockwidth.
+			{ 64, 64, 1 },
+			// Odd mip edge multiples, two lowest miplevels on the y-axis will have widths of 3 and 1 respectively, less than the compression blocksize, and potentially tricky.
+			{ 64, 192, 1 },
+		};
+
+		auto getCaseName = [](VkFormat format, VkExtent3D extent, std::string queueName) {
+			return "mip_copies_" + getFormatCaseName(format) + "_" + std::to_string(extent.width) + "x" + std::to_string(extent.height) + "_" + queueName;
+		};
+
+		for (const auto& extent : extents)
+		{
+			TestParams	params;
+			params.src.image.imageType			= VK_IMAGE_TYPE_2D;
+			params.src.image.extent				= extent;
+			params.src.image.tiling				= VK_IMAGE_TILING_OPTIMAL;
+			params.src.image.operationLayout	= VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+			params.allocationKind				= allocationKind;
+			params.extensionUse					= extensionUse;
+
+			for (const VkFormat *format = compressedFormatsFloats; *format != VK_FORMAT_UNDEFINED; format++)
+			{
+				params.src.image.format				= *format;
+				group->addChild(new CopyCompressedImageToBufferTestCase(testCtx, getCaseName(*format, params.src.image.extent, "universal"), "Copy from image to buffer", params, QueueSelectionOptions::Universal));
+				group->addChild(new CopyCompressedImageToBufferTestCase(testCtx, getCaseName(*format, params.src.image.extent, "compute"), "Copy from image to buffer", params, QueueSelectionOptions::ComputeOnly));
+			}
+		}
+	}
 }
 
-void addImageToBufferTests (tcu::TestCaseGroup* group, AllocationKind allocationKind, ExtensionUse extensionUse)
-{
-	addTestGroup(group, "1d_images", "Copying operations on 1d images", add1dImageToBufferTests, allocationKind, extensionUse);
-	addTestGroup(group, "2d_images", "Copying operations on 2d images", add2dImageToBufferTests, allocationKind, extensionUse);
-}
 
 void addBufferToDepthStencilTests(tcu::TestCaseGroup* group, AllocationKind allocationKind, ExtensionUse extensionUse)
 {
@@ -11873,12 +12417,6 @@ void add2dBufferToImageTests (tcu::TestCaseGroup* group, AllocationKind allocati
 		}
 		group->addChild(new CopyBufferToImageTestCase(testCtx, "array_tightly_sized_buffer", "Copy from different part of tightly sized buffer to each layer", params));
 	}
-}
-
-void addBufferToImageTests (tcu::TestCaseGroup* group, AllocationKind allocationKind, ExtensionUse extensionUse)
-{
-	addTestGroup(group, "1d_images", "Copying operations on 1d images", add1dBufferToImageTests, allocationKind, extensionUse);
-	addTestGroup(group, "2d_images", "Copying operations on 2d images", add2dBufferToImageTests, allocationKind, extensionUse);
 }
 
 void addBufferToBufferTests (tcu::TestCaseGroup* group, AllocationKind allocationKind, ExtensionUse extensionUse)
@@ -12725,222 +13263,6 @@ void addBlittingImageAllFormatsColorSrcFormatTests (tcu::TestCaseGroup* group, B
 	}
 }
 
-const VkFormat	compatibleFormatsUInts[]	=
-{
-	VK_FORMAT_R8_UINT,
-	VK_FORMAT_R8G8_UINT,
-	VK_FORMAT_R8G8B8_UINT,
-	VK_FORMAT_B8G8R8_UINT,
-	VK_FORMAT_R8G8B8A8_UINT,
-	VK_FORMAT_B8G8R8A8_UINT,
-	VK_FORMAT_A8B8G8R8_UINT_PACK32,
-	VK_FORMAT_A2R10G10B10_UINT_PACK32,
-	VK_FORMAT_A2B10G10R10_UINT_PACK32,
-	VK_FORMAT_R16_UINT,
-	VK_FORMAT_R16G16_UINT,
-	VK_FORMAT_R16G16B16_UINT,
-	VK_FORMAT_R16G16B16A16_UINT,
-	VK_FORMAT_R32_UINT,
-	VK_FORMAT_R32G32_UINT,
-	VK_FORMAT_R32G32B32_UINT,
-	VK_FORMAT_R32G32B32A32_UINT,
-	VK_FORMAT_R64_UINT,
-	VK_FORMAT_R64G64_UINT,
-	VK_FORMAT_R64G64B64_UINT,
-	VK_FORMAT_R64G64B64A64_UINT,
-
-	VK_FORMAT_UNDEFINED
-};
-const VkFormat	compatibleFormatsSInts[]	=
-{
-	VK_FORMAT_R8_SINT,
-	VK_FORMAT_R8G8_SINT,
-	VK_FORMAT_R8G8B8_SINT,
-	VK_FORMAT_B8G8R8_SINT,
-	VK_FORMAT_R8G8B8A8_SINT,
-	VK_FORMAT_B8G8R8A8_SINT,
-	VK_FORMAT_A8B8G8R8_SINT_PACK32,
-	VK_FORMAT_A2R10G10B10_SINT_PACK32,
-	VK_FORMAT_A2B10G10R10_SINT_PACK32,
-	VK_FORMAT_R16_SINT,
-	VK_FORMAT_R16G16_SINT,
-	VK_FORMAT_R16G16B16_SINT,
-	VK_FORMAT_R16G16B16A16_SINT,
-	VK_FORMAT_R32_SINT,
-	VK_FORMAT_R32G32_SINT,
-	VK_FORMAT_R32G32B32_SINT,
-	VK_FORMAT_R32G32B32A32_SINT,
-	VK_FORMAT_R64_SINT,
-	VK_FORMAT_R64G64_SINT,
-	VK_FORMAT_R64G64B64_SINT,
-	VK_FORMAT_R64G64B64A64_SINT,
-
-	VK_FORMAT_UNDEFINED
-};
-const VkFormat	compatibleFormatsFloats[]	=
-{
-	VK_FORMAT_R4G4_UNORM_PACK8,
-	VK_FORMAT_R4G4B4A4_UNORM_PACK16,
-	VK_FORMAT_B4G4R4A4_UNORM_PACK16,
-	VK_FORMAT_R5G6B5_UNORM_PACK16,
-	VK_FORMAT_B5G6R5_UNORM_PACK16,
-	VK_FORMAT_R5G5B5A1_UNORM_PACK16,
-	VK_FORMAT_B5G5R5A1_UNORM_PACK16,
-	VK_FORMAT_A1R5G5B5_UNORM_PACK16,
-	VK_FORMAT_R8_UNORM,
-	VK_FORMAT_R8_SNORM,
-	VK_FORMAT_R8_USCALED,
-	VK_FORMAT_R8_SSCALED,
-	VK_FORMAT_R8G8_UNORM,
-	VK_FORMAT_R8G8_SNORM,
-	VK_FORMAT_R8G8_USCALED,
-	VK_FORMAT_R8G8_SSCALED,
-	VK_FORMAT_R8G8B8_UNORM,
-	VK_FORMAT_R8G8B8_SNORM,
-	VK_FORMAT_R8G8B8_USCALED,
-	VK_FORMAT_R8G8B8_SSCALED,
-	VK_FORMAT_B8G8R8_UNORM,
-	VK_FORMAT_B8G8R8_SNORM,
-	VK_FORMAT_B8G8R8_USCALED,
-	VK_FORMAT_B8G8R8_SSCALED,
-	VK_FORMAT_R8G8B8A8_UNORM,
-	VK_FORMAT_R8G8B8A8_SNORM,
-	VK_FORMAT_R8G8B8A8_USCALED,
-	VK_FORMAT_R8G8B8A8_SSCALED,
-	VK_FORMAT_B8G8R8A8_UNORM,
-	VK_FORMAT_B8G8R8A8_SNORM,
-	VK_FORMAT_B8G8R8A8_USCALED,
-	VK_FORMAT_B8G8R8A8_SSCALED,
-	VK_FORMAT_A8B8G8R8_UNORM_PACK32,
-	VK_FORMAT_A8B8G8R8_SNORM_PACK32,
-	VK_FORMAT_A8B8G8R8_USCALED_PACK32,
-	VK_FORMAT_A8B8G8R8_SSCALED_PACK32,
-	VK_FORMAT_A2R10G10B10_UNORM_PACK32,
-	VK_FORMAT_A2R10G10B10_SNORM_PACK32,
-	VK_FORMAT_A2R10G10B10_USCALED_PACK32,
-	VK_FORMAT_A2R10G10B10_SSCALED_PACK32,
-	VK_FORMAT_A2B10G10R10_UNORM_PACK32,
-	VK_FORMAT_A2B10G10R10_SNORM_PACK32,
-	VK_FORMAT_A2B10G10R10_USCALED_PACK32,
-	VK_FORMAT_A2B10G10R10_SSCALED_PACK32,
-	VK_FORMAT_R16_UNORM,
-	VK_FORMAT_R16_SNORM,
-	VK_FORMAT_R16_USCALED,
-	VK_FORMAT_R16_SSCALED,
-	VK_FORMAT_R16_SFLOAT,
-	VK_FORMAT_R16G16_UNORM,
-	VK_FORMAT_R16G16_SNORM,
-	VK_FORMAT_R16G16_USCALED,
-	VK_FORMAT_R16G16_SSCALED,
-	VK_FORMAT_R16G16_SFLOAT,
-	VK_FORMAT_R16G16B16_UNORM,
-	VK_FORMAT_R16G16B16_SNORM,
-	VK_FORMAT_R16G16B16_USCALED,
-	VK_FORMAT_R16G16B16_SSCALED,
-	VK_FORMAT_R16G16B16_SFLOAT,
-	VK_FORMAT_R16G16B16A16_UNORM,
-	VK_FORMAT_R16G16B16A16_SNORM,
-	VK_FORMAT_R16G16B16A16_USCALED,
-	VK_FORMAT_R16G16B16A16_SSCALED,
-	VK_FORMAT_R16G16B16A16_SFLOAT,
-	VK_FORMAT_R32_SFLOAT,
-	VK_FORMAT_R32G32_SFLOAT,
-	VK_FORMAT_R32G32B32_SFLOAT,
-	VK_FORMAT_R32G32B32A32_SFLOAT,
-	VK_FORMAT_R64_SFLOAT,
-	VK_FORMAT_R64G64_SFLOAT,
-	VK_FORMAT_R64G64B64_SFLOAT,
-	VK_FORMAT_R64G64B64A64_SFLOAT,
-	VK_FORMAT_B10G11R11_UFLOAT_PACK32,
-	VK_FORMAT_E5B9G9R9_UFLOAT_PACK32,
-
-	VK_FORMAT_A4R4G4B4_UNORM_PACK16_EXT,
-	VK_FORMAT_A4B4G4R4_UNORM_PACK16_EXT,
-
-	VK_FORMAT_R10X6G10X6B10X6A10X6_UNORM_4PACK16,
-
-	VK_FORMAT_UNDEFINED
-};
-
-const VkFormat	compressedFormatsFloats[] =
-{
-	VK_FORMAT_BC1_RGB_UNORM_BLOCK,
-	VK_FORMAT_BC1_RGBA_UNORM_BLOCK,
-	VK_FORMAT_BC2_UNORM_BLOCK,
-	VK_FORMAT_BC3_UNORM_BLOCK,
-	VK_FORMAT_BC4_UNORM_BLOCK,
-	VK_FORMAT_BC4_SNORM_BLOCK,
-	VK_FORMAT_BC5_UNORM_BLOCK,
-	VK_FORMAT_BC5_SNORM_BLOCK,
-	VK_FORMAT_BC6H_UFLOAT_BLOCK,
-	VK_FORMAT_BC6H_SFLOAT_BLOCK,
-	VK_FORMAT_BC7_UNORM_BLOCK,
-	VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK,
-	VK_FORMAT_ETC2_R8G8B8A1_UNORM_BLOCK,
-	VK_FORMAT_ETC2_R8G8B8A8_UNORM_BLOCK,
-	VK_FORMAT_EAC_R11_UNORM_BLOCK,
-	VK_FORMAT_EAC_R11_SNORM_BLOCK,
-	VK_FORMAT_EAC_R11G11_UNORM_BLOCK,
-	VK_FORMAT_EAC_R11G11_SNORM_BLOCK,
-	VK_FORMAT_ASTC_4x4_UNORM_BLOCK,
-	VK_FORMAT_ASTC_5x4_UNORM_BLOCK,
-	VK_FORMAT_ASTC_5x5_UNORM_BLOCK,
-	VK_FORMAT_ASTC_6x5_UNORM_BLOCK,
-	VK_FORMAT_ASTC_6x6_UNORM_BLOCK,
-	VK_FORMAT_ASTC_8x5_UNORM_BLOCK,
-	VK_FORMAT_ASTC_8x6_UNORM_BLOCK,
-	VK_FORMAT_ASTC_8x8_UNORM_BLOCK,
-	VK_FORMAT_ASTC_10x5_UNORM_BLOCK,
-	VK_FORMAT_ASTC_10x6_UNORM_BLOCK,
-	VK_FORMAT_ASTC_10x8_UNORM_BLOCK,
-	VK_FORMAT_ASTC_10x10_UNORM_BLOCK,
-	VK_FORMAT_ASTC_12x10_UNORM_BLOCK,
-	VK_FORMAT_ASTC_12x12_UNORM_BLOCK,
-
-	VK_FORMAT_UNDEFINED
-};
-
-const VkFormat	compatibleFormatsSrgb[]		=
-{
-	VK_FORMAT_R8_SRGB,
-	VK_FORMAT_R8G8_SRGB,
-	VK_FORMAT_R8G8B8_SRGB,
-	VK_FORMAT_B8G8R8_SRGB,
-	VK_FORMAT_R8G8B8A8_SRGB,
-	VK_FORMAT_B8G8R8A8_SRGB,
-	VK_FORMAT_A8B8G8R8_SRGB_PACK32,
-
-	VK_FORMAT_UNDEFINED
-};
-
-const VkFormat	compressedFormatsSrgb[] =
-{
-	VK_FORMAT_BC1_RGB_SRGB_BLOCK,
-	VK_FORMAT_BC1_RGBA_SRGB_BLOCK,
-	VK_FORMAT_BC2_SRGB_BLOCK,
-	VK_FORMAT_BC3_SRGB_BLOCK,
-	VK_FORMAT_BC7_SRGB_BLOCK,
-	VK_FORMAT_ETC2_R8G8B8_SRGB_BLOCK,
-	VK_FORMAT_ETC2_R8G8B8A1_SRGB_BLOCK,
-	VK_FORMAT_ETC2_R8G8B8A8_SRGB_BLOCK,
-	VK_FORMAT_ASTC_4x4_SRGB_BLOCK,
-	VK_FORMAT_ASTC_5x4_SRGB_BLOCK,
-	VK_FORMAT_ASTC_5x5_SRGB_BLOCK,
-	VK_FORMAT_ASTC_6x5_SRGB_BLOCK,
-	VK_FORMAT_ASTC_6x6_SRGB_BLOCK,
-	VK_FORMAT_ASTC_8x5_SRGB_BLOCK,
-	VK_FORMAT_ASTC_8x6_SRGB_BLOCK,
-	VK_FORMAT_ASTC_8x8_SRGB_BLOCK,
-	VK_FORMAT_ASTC_10x5_SRGB_BLOCK,
-	VK_FORMAT_ASTC_10x6_SRGB_BLOCK,
-	VK_FORMAT_ASTC_10x8_SRGB_BLOCK,
-	VK_FORMAT_ASTC_10x10_SRGB_BLOCK,
-	VK_FORMAT_ASTC_12x10_SRGB_BLOCK,
-	VK_FORMAT_ASTC_12x12_SRGB_BLOCK,
-
-	VK_FORMAT_UNDEFINED
-};
-
 const VkFormat	dedicatedAllocationBlittingFormatsToTest[]	=
 {
 	// compatibleFormatsUInts
@@ -13066,6 +13388,20 @@ std::vector<CopyRegion> create2DCopyRegions(deInt32 srcWidth, deInt32 srcHeight,
 	}
 
 	return regionsVector;
+}
+
+
+void addBufferToImageTests (tcu::TestCaseGroup* group, AllocationKind allocationKind, ExtensionUse extensionUse)
+{
+	addTestGroup(group, "1d_images", "Copying operations on 1d images", add1dBufferToImageTests, allocationKind, extensionUse);
+	addTestGroup(group, "2d_images", "Copying operations on 2d images", add2dBufferToImageTests, allocationKind, extensionUse);
+}
+
+void addImageToBufferTests (tcu::TestCaseGroup* group, AllocationKind allocationKind, ExtensionUse extensionUse)
+{
+	addTestGroup(group, "1d_images", "Copying operations on 1d images", add1dImageToBufferTests, allocationKind, extensionUse);
+	addTestGroup(group, "2d_images", "Copying operations on 2d images", add2dImageToBufferTests, allocationKind,
+ extensionUse);
 }
 
 void addBlittingImageAllFormatsColorTests (tcu::TestCaseGroup* group, AllocationKind allocationKind, ExtensionUse extensionUse)
