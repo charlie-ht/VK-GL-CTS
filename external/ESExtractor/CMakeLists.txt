@@ -25,6 +25,10 @@ if (EXISTS ${ESEXTRACTOR_ABS_PATH}/lib/esextractor.cpp)
 
 	set(ESEXTRACTOR_SRCS
 		${ESEXTRACTOR_ABS_PATH}/lib/esextractor.cpp
+		${ESEXTRACTOR_ABS_PATH}/lib/esereader.cpp
+		${ESEXTRACTOR_ABS_PATH}/lib/esestream.cpp
+		${ESEXTRACTOR_ABS_PATH}/lib/eseivfstream.cpp
+		${ESEXTRACTOR_ABS_PATH}/lib/esenalstream.cpp
 		${ESEXTRACTOR_ABS_PATH}/lib/esenalu.cpp
 		)
 
