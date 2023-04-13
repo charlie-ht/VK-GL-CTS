@@ -63,7 +63,7 @@ public:
         }
 
         int e = 0;
-        e = es_extractor_read_packet(extractor, &pkt);
+        e = es_extractor_read_frame(extractor, &pkt);
 
         if (e > ESE_RESULT_LAST_PACKET) {
             return false;
