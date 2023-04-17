@@ -43,14 +43,12 @@
 #include "vkCmdUtil.hpp"
 #include "vkTypeUtil.hpp"
 
-#include "../ycbcr/vktYCbCrUtil.hpp"
-
 #ifdef DE_BUILD_VIDEO
 	#include "vktVideoSessionNvUtils.hpp"
 	#include "extESExtractor.hpp"
 	#include "vktVideoBaseDecodeUtils.hpp"
+    #include "vktVideoReferenceChecksums.hpp"
 #endif
-
 
 #include <atomic>
 
@@ -120,25 +118,6 @@ DecodedFrame initDecodeFrame (void)
 	};
 
 	return frameTemplate;
-}
-
-// Avoid useless sampler in writeImage 2.5x faster
-MovePtr<tcu::TextureLevel> convertToRGBASized (const tcu::ConstPixelBufferAccess& src, const tcu::UVec2& size)
-{
-	const tcu::TextureFormat	format	(tcu::TextureFormat::RGB, tcu::TextureFormat::UNORM_INT8);
-	MovePtr<tcu::TextureLevel>	result	(new tcu::TextureLevel(format, size.x(), size.y()));
-	tcu::PixelBufferAccess		access	(result->getAccess());
-
-	for (int y = 0; y < result->getHeight(); ++y)
-	for (int x = 0; x < result->getWidth(); ++x)
-		access.setPixel(src.getPixelUint(x, y), x, y);
-
-	return result;
-}
-
-MovePtr<tcu::TextureLevel> convertToRGBA (const tcu::ConstPixelBufferAccess& src)
-{
-	return convertToRGBASized(src, tcu::UVec2((uint32_t)src.getWidth(), (uint32_t)src.getHeight()));
 }
 
 MovePtr<MultiPlaneImageData> getDecodedImage (const DeviceInterface&	vkd,
@@ -262,15 +241,7 @@ public:
 	tcu::TestStatus						iterateSingleFrame						(void);
 	tcu::TestStatus						iterateDoubleFrame						(void);
 	tcu::TestStatus						iterateMultipleFrame					(void);
-	bool								verifyImage								(uint32_t						frameNumber,
-																				 const MultiPlaneImageData&		multiPlaneImageData);
-	bool								verifyImageMultipleFrame				(uint32_t						frameNumber,
-																				 const MultiPlaneImageData&		multiPlaneImageData);
-	bool								verifyImageMultipleFrameNoReference		(uint32_t						frameNumber,
-																				 const MultiPlaneImageData&		multiPlaneImageData,
-																				 const vector<ReferencePixel>&	referencePixels);
-	bool								verifyImageMultipleFrameWithReference	(uint32_t						frameNumber,
-																				 const MultiPlaneImageData&		multiPlaneImageData);
+
 protected:
 	CaseDef								m_caseDef;
 	MovePtr<VideoBaseDecoder>			m_decoder;
@@ -334,6 +305,32 @@ VideoDecodeTestInstance::VideoDecodeTestInstance (Context& context, const CaseDe
 
 VideoDecodeTestInstance::~VideoDecodeTestInstance (void)
 {
+}
+
+static const std::string& frameReferenceChecksum (TestType test, int frameNumber)
+{
+	switch (test) {
+		case TEST_TYPE_H264_DECODE_I:
+		case TEST_TYPE_H264_DECODE_I_P:
+		case TEST_TYPE_H264_DECODE_I_P_NOT_MATCHING_ORDER:
+		case TEST_TYPE_H264_DECODE_QUERY_RESULT_WITH_STATUS:
+			return TestReferenceChecksums::clipA.at(frameNumber);
+		case TEST_TYPE_H264_DECODE_I_P_B_13:
+		case TEST_TYPE_H264_DECODE_I_P_B_13_NOT_MATCHING_ORDER:
+			return TestReferenceChecksums::jellyfishAVC.at(frameNumber);
+		case TEST_TYPE_H264_DECODE_RESOLUTION_CHANGE:
+		case TEST_TYPE_H264_DECODE_RESOLUTION_CHANGE_DPB:
+			return TestReferenceChecksums::clipC.at(frameNumber);
+		case TEST_TYPE_H265_DECODE_I:
+		case TEST_TYPE_H265_DECODE_I_P:
+		case TEST_TYPE_H265_DECODE_I_P_NOT_MATCHING_ORDER:
+			// Clip A and clip D have the same reference checksums.
+			return TestReferenceChecksums::clipA.at(frameNumber);
+		case TEST_TYPE_H265_DECODE_I_P_B_13:
+		case TEST_TYPE_H265_DECODE_I_P_B_13_NOT_MATCHING_ORDER:
+			return TestReferenceChecksums::jellyfishHEVC.at(frameNumber);
+		default: TCU_THROW(InternalError, "Unknown test type");
+	}
 }
 
 std::string VideoDecodeTestInstance::getTestVideoData (void)
@@ -439,7 +436,7 @@ tcu::TestStatus VideoDecodeTestInstance::iterateSingleFrame (void)
 			const VkImageLayout				layout		= frame.decodedImageLayout;
 			MovePtr<MultiPlaneImageData>	resultImage	= getDecodedImage(vkd, device, allocator, image, layout, format, imageExtent, queueFamilyIndexTransfer, queueFamilyIndexDecode);
 
-			if (verifyImage(frameNumber, *resultImage))
+			if (checksumFrame(*resultImage, frameReferenceChecksum(m_caseDef.testType, frameNumber)))
 				framesCorrect++;
 
 			m_decoder->ReleaseDisplayedFrame(&frame);
@@ -458,7 +455,7 @@ tcu::TestStatus VideoDecodeTestInstance::iterateSingleFrame (void)
 	if (framesCorrect > 0 && framesCorrect == frameNumber)
 		return tcu::TestStatus::pass("pass");
 	else
-		return tcu::TestStatus::fail("Some frames has not been decoded correctly (" + de::toString(framesCorrect) + "/" + de::toString(frameNumber) + ")");
+		return tcu::TestStatus::fail(de::toString(framesCorrect) + " out of " + de::toString(frameNumber) + " frames rendered correctly");
 }
 
 tcu::TestStatus VideoDecodeTestInstance::iterateDoubleFrame (void)
@@ -529,7 +526,7 @@ tcu::TestStatus VideoDecodeTestInstance::iterateDoubleFrame (void)
 				const bool						assumeCorrect	= m_caseDef.testType == TEST_TYPE_H264_DECODE_QUERY_RESULT_WITH_STATUS;
 				MovePtr<MultiPlaneImageData>	resultImage		= getDecodedImage(vkd, device, allocator, image, layout, format, imageExtent, queueFamilyIndexTransfer, queueFamilyIndexDecode);
 
-				if (assumeCorrect || verifyImage(frameNumber, *resultImage))
+				if (assumeCorrect || checksumFrame(*resultImage, frameReferenceChecksum(m_caseDef.testType, frameNumber)))
 					framesCorrect++;
 
 				m_decoder->ReleaseDisplayedFrame(&frame);
@@ -550,7 +547,7 @@ tcu::TestStatus VideoDecodeTestInstance::iterateDoubleFrame (void)
 	if (framesCorrect > 0 && framesCorrect == frameNumber)
 		return tcu::TestStatus::pass("pass");
 	else
-		return tcu::TestStatus::fail("Some frames has not been decoded correctly (" + de::toString(framesCorrect) + "/" + de::toString(frameNumber) + ")");
+		return tcu::TestStatus::fail(de::toString(framesCorrect) + " out of " + de::toString(frameNumber) + " frames rendered correctly");
 }
 
 tcu::TestStatus VideoDecodeTestInstance::iterateMultipleFrame (void)
@@ -606,24 +603,30 @@ tcu::TestStatus VideoDecodeTestInstance::iterateMultipleFrame (void)
 			m_decoder->GetVideoFrameBuffer()->DequeueDecodedPicture(&frame);
 		}
 
-		bool	success = true;
+		bool	isResolutionChangeTest = m_caseDef.testType == TEST_TYPE_H264_DECODE_RESOLUTION_CHANGE || m_caseDef.testType == TEST_TYPE_H264_DECODE_RESOLUTION_CHANGE_DPB;
 
 		for (int32_t frameNdx = 0; frameNdx < m_frameCountTrigger; ++frameNdx)
 		{
 			DecodedFrame&		frame		= frames[frameNdx];
-			const VkExtent2D	imageExtent	= frame.pDecodedImage->getExtent();
+			VkExtent2D	imageExtent	= frame.pDecodedImage->getExtent();
 			const VkImage		image		= frame.pDecodedImage->getImage();
 			const VkFormat		format		= frame.pDecodedImage->getFormat();
 			const VkImageLayout	layout		= frame.decodedImageLayout;
 
 			if (frame.pictureIndex >= 0)
 			{
+				// FIXME: The active coded extent is not being tracked
+				// in the CTS yet. This is a hack for the resolution
+				// change case until that core problem is properly
+				// addressed.
+				if (isResolutionChangeTest && frameNdx >= 15) {
+					imageExtent.width = 176;
+					imageExtent.height = 144;
+				}
 				MovePtr<MultiPlaneImageData>	resultImage	= getDecodedImage(vkd, device, allocator, image, layout, format, imageExtent, queueFamilyIndexTransfer, queueFamilyIndexDecode);
 
-				if (success && verifyImageMultipleFrame(frameNumber, *resultImage))
+				if (checksumFrame(*resultImage, frameReferenceChecksum(m_caseDef.testType, frameNumber)))
 					framesCorrect++;
-				else
-					success = false;
 
 				m_decoder->ReleaseDisplayedFrame(&frame);
 				frameNumber++;
@@ -637,208 +640,7 @@ tcu::TestStatus VideoDecodeTestInstance::iterateMultipleFrame (void)
 	if (framesCorrect > 0 && framesCorrect == frameNumber)
 		return tcu::TestStatus::pass("pass");
 	else
-		return tcu::TestStatus::fail("Some frames has not been decoded correctly (" + de::toString(framesCorrect) + "/" + de::toString(frameNumber) + ")");
-}
-
-bool VideoDecodeTestInstance::verifyImage (uint32_t frameNumber, const MultiPlaneImageData& multiPlaneImageData)
-{
-	const tcu::UVec2			imageSize				= multiPlaneImageData.getSize();
-	const uint32_t				barCount				= 10;
-	const uint32_t				barWidth				= 16;
-	const uint32_t				barNum					= uint32_t(frameNumber) % barCount;
-	const uint32_t				edgeX					= imageSize.x() - barWidth * barNum;
-	const uint32_t				colorNdx				= uint32_t(frameNumber) / barCount;
-	const int32_t				refColorsV[]			= { 240,  34, 110 };
-	const int32_t				refColorsY[]			= {  81, 145,  41 };
-	const int32_t				refColorsU[]			= {  90,   0,   0 };
-	const tcu::UVec4			refColorV				= tcu::UVec4(refColorsV[colorNdx], 0, 0, 0);
-	const tcu::UVec4			refColorY				= tcu::UVec4(refColorsY[colorNdx], 0, 0, 0);
-	const tcu::UVec4			refColorU				= tcu::UVec4(refColorsU[colorNdx], 0, 0, 0);
-	const tcu::UVec4			refBlankV				= tcu::UVec4(128, 0, 0, 0);
-	const tcu::UVec4			refBlankY				= tcu::UVec4( 16, 0, 0, 0);
-	const tcu::UVec4			refBlankU				= tcu::UVec4(128, 0, 0, 0);
-	tcu::ConstPixelBufferAccess	outPixelBufferAccessV	= multiPlaneImageData.getChannelAccess(0);
-	tcu::ConstPixelBufferAccess	outPixelBufferAccessY	= multiPlaneImageData.getChannelAccess(1);
-	tcu::ConstPixelBufferAccess	outPixelBufferAccessU	= multiPlaneImageData.getChannelAccess(2);
-	tcu::TextureLevel			refPixelBufferV			(mapVkFormat(VK_FORMAT_R8_UNORM), imageSize.x(), imageSize.y());
-	tcu::TextureLevel			refPixelBufferY			(mapVkFormat(VK_FORMAT_R8_UNORM), imageSize.x(), imageSize.y());
-	tcu::TextureLevel			refPixelBufferU			(mapVkFormat(VK_FORMAT_R8_UNORM), imageSize.x(), imageSize.y());
-	tcu::PixelBufferAccess		refPixelBufferAccessV	= refPixelBufferV.getAccess();
-	tcu::PixelBufferAccess		refPixelBufferAccessY	= refPixelBufferY.getAccess();
-	tcu::PixelBufferAccess		refPixelBufferAccessU	= refPixelBufferU.getAccess();
-	tcu::TestLog&				log						= m_context.getTestContext().getLog();
-	const string				titleV					= "Rendered frame " + de::toString(frameNumber) + ". V Component";
-	const string				titleY					= "Rendered frame " + de::toString(frameNumber) + ". Y Component";
-	const string				titleU					= "Rendered frame " + de::toString(frameNumber) + ". U Component";
-	const tcu::UVec4			threshold				= tcu::UVec4(0, 0, 0, 0);
-
-	for (uint32_t x = 0; x < imageSize.x(); ++x)
-	{
-		const tcu::UVec4&	colorV	= x < edgeX ? refColorV : refBlankV;
-		const tcu::UVec4&	colorY	= x < edgeX ? refColorY : refBlankY;
-		const tcu::UVec4&	colorU	= x < edgeX ? refColorU : refBlankU;
-
-		for (uint32_t y = 0; y < imageSize.y(); ++y)
-		{
-			refPixelBufferAccessV.setPixel(colorV, x, y);
-			refPixelBufferAccessY.setPixel(colorY, x, y);
-			refPixelBufferAccessU.setPixel(colorU, x, y);
-		}
-	}
-
-	const bool resultV = tcu::intThresholdCompare(log, titleV.c_str(), "", refPixelBufferAccessV, outPixelBufferAccessV, threshold, tcu::COMPARE_LOG_ON_ERROR);
-	const bool resultY = tcu::intThresholdCompare(log, titleY.c_str(), "", refPixelBufferAccessY, outPixelBufferAccessY, threshold, tcu::COMPARE_LOG_ON_ERROR);
-	const bool resultU = tcu::intThresholdCompare(log, titleU.c_str(), "", refPixelBufferAccessU, outPixelBufferAccessU, threshold, tcu::COMPARE_LOG_ON_ERROR);
-
-	return resultV && resultY && resultU;
-}
-
-bool VideoDecodeTestInstance::verifyImageMultipleFrame (uint32_t frameNumber, const MultiPlaneImageData& multiPlaneImageData)
-{
-	const bool	noReferenceTests	=  m_caseDef.testType == TEST_TYPE_H264_DECODE_I_P_B_13
-									|| m_caseDef.testType == TEST_TYPE_H264_DECODE_I_P_B_13_NOT_MATCHING_ORDER
-									|| m_caseDef.testType == TEST_TYPE_H265_DECODE_I_P_B_13
-									|| m_caseDef.testType == TEST_TYPE_H265_DECODE_I_P_B_13_NOT_MATCHING_ORDER;
-
-	if (noReferenceTests)
-	{
-		const bool						h264				=  m_caseDef.testType == TEST_TYPE_H264_DECODE_I_P_B_13
-															|| m_caseDef.testType == TEST_TYPE_H264_DECODE_I_P_B_13_NOT_MATCHING_ORDER;
-		const vector<ReferencePixel>	referencePixels264
-		{
-			ReferencePixel(tcu::IVec3(       0,        0,  0), tcu::IVec3( 124,  53, 140)),
-			ReferencePixel(tcu::IVec3(1920 - 1, 1080 - 1,  0), tcu::IVec3( 131, 190, 115)),
-			ReferencePixel(tcu::IVec3(       0,        0, 12), tcu::IVec3( 140, 223,  92)),
-			ReferencePixel(tcu::IVec3(1920 - 1, 1080 - 1, 12), tcu::IVec3( 138, 166,  98)),
-		};
-		const vector<ReferencePixel>	referencePixels265
-		{
-			ReferencePixel(tcu::IVec3(       0,        0,  0), tcu::IVec3( 124,  55, 144)),
-			ReferencePixel(tcu::IVec3(1920 - 1, 1080 - 1,  0), tcu::IVec3( 130, 190, 114)),
-			ReferencePixel(tcu::IVec3(       0,        0, 12), tcu::IVec3( 142, 210,  94)),
-			ReferencePixel(tcu::IVec3(1920 - 1, 1080 - 1, 12), tcu::IVec3( 137, 166,  96)),
-		};
-		const vector<ReferencePixel>&	referencePixels		= h264 ? referencePixels264 : referencePixels265;
-
-		return verifyImageMultipleFrameNoReference(frameNumber, multiPlaneImageData, referencePixels);
-	}
-	else
-		return verifyImageMultipleFrameWithReference(frameNumber, multiPlaneImageData);
-}
-
-bool VideoDecodeTestInstance::verifyImageMultipleFrameWithReference (uint32_t frameNumber, const MultiPlaneImageData& multiPlaneImageData)
-{
-	tcu::TestLog&				log						= m_context.getTestContext().getLog();
-	const bool					firstHalf				= frameNumber < 15;
-	const bool					resolutionChange		= m_caseDef.testType == TEST_TYPE_H264_DECODE_RESOLUTION_CHANGE || m_caseDef.testType == TEST_TYPE_H264_DECODE_RESOLUTION_CHANGE_DPB;
-	const uint32_t				k						= resolutionChange
-														? (firstHalf ? 2 : 1)
-														: 1;
-	const uint32_t				cellSize				= 16 * k;
-	const uint32_t				cellCountX				= 11;
-	const uint32_t				cellCountV				= 9;
-	const tcu::UVec2			imageSize				= { cellSize * cellCountX, cellSize * cellCountV };
-	const string				titleV					= "Rendered frame " + de::toString(frameNumber) + ". V Component";
-	const tcu::UVec4			refColor0V				= tcu::UVec4(128,   0,   0, 255);
-	const tcu::UVec4			refColor1V				= tcu::UVec4(128,   0,   0, 255);
-	const tcu::UVec4&			refColorV				= firstHalf ? refColor0V : refColor1V;
-	const tcu::UVec4&			refBlankV				= firstHalf ? refColor1V : refColor0V;
-	tcu::TextureLevel			refPixelBufferV			(mapVkFormat(VK_FORMAT_R8_UNORM), imageSize.x(), imageSize.y());
-	tcu::PixelBufferAccess		refPixelBufferAccessV	= refPixelBufferV.getAccess();
-	MovePtr<tcu::TextureLevel>	outPixelBufferV			= convertToRGBASized(multiPlaneImageData.getChannelAccess(0), imageSize);
-	tcu::PixelBufferAccess		outPixelBufferAccessV	= outPixelBufferV->getAccess();
-	const string				titleY					= "Rendered frame " + de::toString(frameNumber) + ". Y Component";
-	const tcu::UVec4			refColor0Y				= tcu::UVec4(235,   0,   0, 255);
-	const tcu::UVec4			refColor1Y				= tcu::UVec4( 16,   0,   0, 255);
-	const tcu::UVec4&			refColorY				= firstHalf ? refColor0Y : refColor1Y;
-	const tcu::UVec4&			refBlankY				= firstHalf ? refColor1Y : refColor0Y;
-	tcu::TextureLevel			refPixelBufferY			(mapVkFormat(VK_FORMAT_R8_UNORM), imageSize.x(), imageSize.y());
-	tcu::PixelBufferAccess		refPixelBufferAccessY	= refPixelBufferY.getAccess();
-	MovePtr<tcu::TextureLevel>	outPixelBufferY			= convertToRGBASized(multiPlaneImageData.getChannelAccess(1), imageSize);
-	tcu::PixelBufferAccess		outPixelBufferAccessY	= outPixelBufferY->getAccess();
-	const string				titleU					= "Rendered frame " + de::toString(frameNumber) + ". U Component";
-	const tcu::UVec4			refColor0U				= tcu::UVec4(128, 0, 0, 255);
-	const tcu::UVec4			refColor1U				= tcu::UVec4(128, 0, 0, 255);
-	const tcu::UVec4&			refColorU				= firstHalf ? refColor0U : refColor1U;
-	const tcu::UVec4&			refBlankU				= firstHalf ? refColor1U : refColor0U;
-	tcu::TextureLevel			refPixelBufferU			(mapVkFormat(VK_FORMAT_R8_UNORM), imageSize.x(), imageSize.y());
-	tcu::PixelBufferAccess		refPixelBufferAccessU	= refPixelBufferU.getAccess();
-	MovePtr<tcu::TextureLevel>	outPixelBufferU			= convertToRGBASized(multiPlaneImageData.getChannelAccess(2), imageSize);
-	tcu::PixelBufferAccess		outPixelBufferAccessU	= outPixelBufferU->getAccess();
-	const tcu::UVec4			threshold				= tcu::UVec4(0, 0, 0, 0);
-
-	for (uint32_t x = 0; x < imageSize.x(); ++x)
-	for (uint32_t y = 0; y < imageSize.y(); ++y)
-	{
-		refPixelBufferAccessV.setPixel(refBlankV, x, y);
-		refPixelBufferAccessY.setPixel(refBlankY, x, y);
-		refPixelBufferAccessU.setPixel(refBlankU, x, y);
-	}
-
-	for (uint32_t cellNdx = 0; cellNdx <= frameNumber % 15; cellNdx++)
-	{
-		const uint32_t	cellOfs	= firstHalf ? 0 : 6 * cellSize;
-		const uint32_t	cellX0	= cellSize * (cellNdx % 5);
-		const uint32_t	cellV0	= cellSize * (cellNdx / 5) + cellOfs;
-		const uint32_t	cellX1	= cellX0 + cellSize;
-		const uint32_t	cellV1	= cellV0 + cellSize;
-
-		for (uint32_t x = cellX0; x < cellX1; ++x)
-		for (uint32_t y = cellV0; y < cellV1; ++y)
-		{
-			refPixelBufferAccessV.setPixel(refColorV, x, y);
-			refPixelBufferAccessY.setPixel(refColorY, x, y);
-			refPixelBufferAccessU.setPixel(refColorU, x, y);
-		}
-	}
-
-	const bool resultV = tcu::intThresholdCompare(log, titleV.c_str(), "", refPixelBufferAccessV, outPixelBufferAccessV, threshold, tcu::COMPARE_LOG_ON_ERROR);
-	const bool resultY = tcu::intThresholdCompare(log, titleY.c_str(), "", refPixelBufferAccessY, outPixelBufferAccessY, threshold, tcu::COMPARE_LOG_ON_ERROR);
-	const bool resultU = tcu::intThresholdCompare(log, titleU.c_str(), "", refPixelBufferAccessU, outPixelBufferAccessU, threshold, tcu::COMPARE_LOG_ON_ERROR);
-
-	return resultV && resultY && resultU;
-}
-
-bool VideoDecodeTestInstance::verifyImageMultipleFrameNoReference (uint32_t frameNumber, const MultiPlaneImageData& multiPlaneImageData, const vector<ReferencePixel>& referencePixels)
-{
-	bool decodeFrame = false;
-	for (size_t i = 0; i < referencePixels.size(); i++)
-		if (referencePixels[i].first.z() == static_cast<int>(frameNumber))
-			decodeFrame = true;
-
-	if (decodeFrame)
-	{
-		MovePtr<tcu::TextureLevel>	outPixelBufferV			= convertToRGBA(multiPlaneImageData.getChannelAccess(0));
-		tcu::PixelBufferAccess		outPixelBufferAccessV	= outPixelBufferV->getAccess();
-		MovePtr<tcu::TextureLevel>	outPixelBufferY			= convertToRGBA(multiPlaneImageData.getChannelAccess(1));
-		tcu::PixelBufferAccess		outPixelBufferAccessY	= outPixelBufferY->getAccess();
-		MovePtr<tcu::TextureLevel>	outPixelBufferU			= convertToRGBA(multiPlaneImageData.getChannelAccess(2));
-		tcu::PixelBufferAccess		outPixelBufferAccessU	= outPixelBufferU->getAccess();
-		tcu::TestLog&				log						= m_context.getTestContext().getLog();
-
-		log << tcu::TestLog::Message << "TODO: WARNING: ONLY FEW PIXELS ARE CHECKED\n" << tcu::TestLog::EndMessage;
-
-		log << tcu::TestLog::ImageSet("Frame", "")
-			<< tcu::TestLog::Image("Result V", "Result V", outPixelBufferAccessV)
-			<< tcu::TestLog::Image("Result Y", "Result Y", outPixelBufferAccessY)
-			<< tcu::TestLog::Image("Result U", "Result U", outPixelBufferAccessU)
-			<< tcu::TestLog::EndImageSet;
-
-		for (size_t i = 0; i < referencePixels.size(); i++)
-			if (referencePixels[i].first.z() == static_cast<int>(frameNumber))
-			{
-				const tcu::IVec3&	pos		= referencePixels[i].first;
-				const tcu::IVec3&	ref		= referencePixels[i].second;
-				const tcu::IVec3	value	= tcu::IVec3(outPixelBufferAccessV.getPixelInt(pos.x(), pos.y()).x(),
-														 outPixelBufferAccessY.getPixelInt(pos.x(), pos.y()).x(),
-														 outPixelBufferAccessU.getPixelInt(pos.x(), pos.y()).x());
-
-				if (value != ref)
-					return false;
-			}
-	}
-
-	return true;
+		return tcu::TestStatus::fail(de::toString(framesCorrect) + " out of " + de::toString(frameNumber) + " frames rendered correctly");
 }
 
 class DualVideoDecodeTestInstance : public VideoBaseTestInstance
@@ -849,10 +651,10 @@ public:
 										~DualVideoDecodeTestInstance	(void);
 
 	std::string							getTestVideoData				(bool						primary);
+	const std::string&					getFrameReferenceChecksum		(bool						primary,
+																		 int						frameNumber);
 	tcu::TestStatus						iterate							(void);
-	bool								verifyImage						(bool						firstClip,
-																		 int32_t					frameNumber,
-																		 const MultiPlaneImageData&	multiPlaneImageData);
+
 protected:
 	CaseDef								m_caseDef;
 	MovePtr<VideoBaseDecoder>			m_decoder1;
@@ -903,6 +705,17 @@ std::string DualVideoDecodeTestInstance::getTestVideoData (bool primary)
 		case TEST_TYPE_H264_DECODE_INTERLEAVED:					return primary ? getVideoDataClipA() : getVideoDataClipB();
 		case TEST_TYPE_H264_BOTH_DECODE_ENCODE_INTERLEAVED:		return getVideoDataClipA();
 		case TEST_TYPE_H264_H265_DECODE_INTERLEAVED:			return primary ? getVideoDataClipA() : getVideoDataClipD();
+		default:												TCU_THROW(InternalError, "Unknown testType");
+	}
+}
+
+const std::string& DualVideoDecodeTestInstance::getFrameReferenceChecksum (bool primary, int frameNumber)
+{
+	switch (m_caseDef.testType)
+	{
+		case TEST_TYPE_H264_DECODE_INTERLEAVED:					return primary ? TestReferenceChecksums::clipA.at(frameNumber) : TestReferenceChecksums::clipB.at(frameNumber);
+		case TEST_TYPE_H264_BOTH_DECODE_ENCODE_INTERLEAVED: /* fallthru */
+		case TEST_TYPE_H264_H265_DECODE_INTERLEAVED:			return TestReferenceChecksums::clipA.at(frameNumber);
 		default:												TCU_THROW(InternalError, "Unknown testType");
 	}
 }
@@ -988,7 +801,6 @@ tcu::TestStatus DualVideoDecodeTestInstance::iterate (void)
 		VideoBaseDecoder*	decoder			= firstDecoder ? m_decoder1.get() : m_decoder2.get();
 		const bool			firstClip		= firstDecoder ? true
 											: m_caseDef.testType == TEST_TYPE_H264_H265_DECODE_INTERLEAVED;
-
 		for (int32_t frameNdx = 0; frameNdx < m_frameCountTrigger; ++frameNdx)
 		{
 			decoder->GetVideoFrameBuffer()->DequeueDecodedPicture(&frames[frameNdx]);
@@ -1003,7 +815,7 @@ tcu::TestStatus DualVideoDecodeTestInstance::iterate (void)
 			{
 				MovePtr<MultiPlaneImageData> resultImage = getDecodedImage(vkd, device, allocator, image, layout, format, imageExtent, queueFamilyIndexTransfer, queueFamilyIndexDecode);
 
-				if (verifyImage(firstClip, frameNdx, *resultImage))
+				if (checksumFrame(*resultImage, getFrameReferenceChecksum(firstClip, frameNdx)))
 					framesCorrect++;
 
 				decoder->ReleaseDisplayedFrame(&frame);
@@ -1021,66 +833,11 @@ tcu::TestStatus DualVideoDecodeTestInstance::iterate (void)
 	if (framesCorrect > 0 && framesCorrect == frameNumber)
 		return tcu::TestStatus::pass("pass");
 	else
-		return tcu::TestStatus::fail("Some frames has not been decoded correctly (" + de::toString(framesCorrect) + "/" + de::toString(frameNumber) + ")");
+		return tcu::TestStatus::fail(de::toString(framesCorrect) + " out of " + de::toString(frameNumber) + " frames rendered correctly");
 }
 
-bool DualVideoDecodeTestInstance::verifyImage (bool firstClip, int32_t frameNumber, const MultiPlaneImageData& multiPlaneImageData)
-{
-	const tcu::UVec2			imageSize				= multiPlaneImageData.getSize();
-	const uint32_t				k						= firstClip ? 1 : 2;
-	const uint32_t				barCount				= 10;
-	const uint32_t				barWidth				= 16 * k;
-	const uint32_t				barNum					= uint32_t(frameNumber) % barCount;
-	const uint32_t				edgeX					= imageSize.x() - barWidth * barNum;
-	const uint32_t				colorNdx				= uint32_t(frameNumber) / barCount;
-	const int32_t				refColorsV1[]			= { 240,  34, 110 };
-	const int32_t				refColorsY1[]			= {  81, 145,  41 };
-	const int32_t				refColorsU1[]			= {  90,   0,   0 };
-	const int32_t				refColorsV2[]			= {  16,   0,   0 };
-	const int32_t				refColorsY2[]			= { 170,   0,   0 };
-	const int32_t				refColorsU2[]			= { 166,   0,   0 };
-	const tcu::UVec4			refColorV				= tcu::UVec4(firstClip ? refColorsV1[colorNdx] : refColorsV2[colorNdx], 0, 0, 0);
-	const tcu::UVec4			refColorY				= tcu::UVec4(firstClip ? refColorsY1[colorNdx] : refColorsY2[colorNdx], 0, 0, 0);
-	const tcu::UVec4			refColorU				= tcu::UVec4(firstClip ? refColorsU1[colorNdx] : refColorsU2[colorNdx], 0, 0, 0);
-	const tcu::UVec4			refBlankV				= tcu::UVec4(128, 0, 0, 0);
-	const tcu::UVec4			refBlankY				= tcu::UVec4( 16, 0, 0, 0);
-	const tcu::UVec4			refBlankU				= tcu::UVec4(128, 0, 0, 0);
-	tcu::ConstPixelBufferAccess	outPixelBufferAccessV	= multiPlaneImageData.getChannelAccess(0);
-	tcu::ConstPixelBufferAccess	outPixelBufferAccessY	= multiPlaneImageData.getChannelAccess(1);
-	tcu::ConstPixelBufferAccess	outPixelBufferAccessU	= multiPlaneImageData.getChannelAccess(2);
-	tcu::TextureLevel			refPixelBufferV			(mapVkFormat(VK_FORMAT_R8_UNORM), imageSize.x(), imageSize.y());
-	tcu::TextureLevel			refPixelBufferY			(mapVkFormat(VK_FORMAT_R8_UNORM), imageSize.x(), imageSize.y());
-	tcu::TextureLevel			refPixelBufferU			(mapVkFormat(VK_FORMAT_R8_UNORM), imageSize.x(), imageSize.y());
-	tcu::PixelBufferAccess		refPixelBufferAccessV	= refPixelBufferV.getAccess();
-	tcu::PixelBufferAccess		refPixelBufferAccessY	= refPixelBufferY.getAccess();
-	tcu::PixelBufferAccess		refPixelBufferAccessU	= refPixelBufferU.getAccess();
-	tcu::TestLog&				log						= m_context.getTestContext().getLog();
-	const string				titleV					= "Rendered frame " + de::toString(frameNumber) + ". V Component";
-	const string				titleY					= "Rendered frame " + de::toString(frameNumber) + ". Y Component";
-	const string				titleU					= "Rendered frame " + de::toString(frameNumber) + ". U Component";
-	const tcu::UVec4			threshold				= tcu::UVec4(0, 0, 0, 0);
-
-	for (uint32_t x = 0; x < imageSize.x(); ++x)
-	{
-		const tcu::UVec4& colorV = (x < edgeX) ? refColorV : refBlankV;
-		const tcu::UVec4& colorY = (x < edgeX) ? refColorY : refBlankY;
-		const tcu::UVec4& colorU = (x < edgeX) ? refColorU : refBlankU;
-
-		for (uint32_t y = 0; y < imageSize.y(); ++y)
-		{
-			refPixelBufferAccessV.setPixel(colorV, x, y);
-			refPixelBufferAccessY.setPixel(colorY, x, y);
-			refPixelBufferAccessU.setPixel(colorU, x, y);
-		}
-	}
-
-	const bool resultV = tcu::intThresholdCompare(log, titleV.c_str(), "", refPixelBufferAccessV, outPixelBufferAccessV, threshold, tcu::COMPARE_LOG_ON_ERROR);
-	const bool resultY = tcu::intThresholdCompare(log, titleY.c_str(), "", refPixelBufferAccessY, outPixelBufferAccessY, threshold, tcu::COMPARE_LOG_ON_ERROR);
-	const bool resultU = tcu::intThresholdCompare(log, titleU.c_str(), "", refPixelBufferAccessU, outPixelBufferAccessU, threshold, tcu::COMPARE_LOG_ON_ERROR);
-
-	return resultV && resultY && resultU;
-}
 #endif // #ifdef DE_BUILD_VIDEO
+
 class VideoDecodeTestCase : public TestCase
 {
 	public:

@@ -32,6 +32,9 @@
 #include "vktTestCase.hpp"
 #include "vktCustomInstancesDevices.hpp"
 
+#include "ycbcr/vktYCbCrUtil.hpp"
+#include "vkMd5Sum.hpp"
+
 namespace vkt
 {
 namespace video
@@ -158,6 +161,8 @@ protected:
 
 	VideoDevice						m_videoDevice;
 };
+
+bool checksumFrame (const ycbcr::MultiPlaneImageData& multiPlaneImageData, const std::string& referenceChecksums);
 
 } // video
 } // vkt

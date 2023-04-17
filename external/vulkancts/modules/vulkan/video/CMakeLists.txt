@@ -26,6 +26,7 @@ set(DEQP_VK_VIDEO_SRCS_TARGET_INDEPENDENT
 	vktVideoTestUtils.hpp
 	vktVideoTests.cpp
 	vktVideoTests.hpp
+	vktVideoReferenceChecksums.hpp
 	)
 
 if (DE_OS_IS_WIN32 OR DE_OS_IS_UNIX)
