@@ -37,6 +37,8 @@
 
 #include "vktVideoDecodeTests.hpp"
 
+#include "vkMd5Sum.hpp"
+
 using namespace vk;
 using namespace std;
 
@@ -797,6 +799,37 @@ de::MovePtr<StdVideoH264PictureParameterSet> getStdVideoH264PictureParameterSet 
 	};
 
 	return de::MovePtr<StdVideoH264PictureParameterSet>(new StdVideoH264PictureParameterSet(stdVideoH264PictureParameterSet));
+}
+
+static std::vector<deUint8> semiplanarToYV12(const ycbcr::MultiPlaneImageData& multiPlaneImageData)
+{
+	DE_ASSERT(multiPlaneImageData.getFormat() == VK_FORMAT_G8_B8R8_2PLANE_420_UNORM);
+
+	std::vector<deUint8> YV12Buffer;
+	size_t plane0Size = multiPlaneImageData.getPlaneSize(0);
+	size_t plane1Size = multiPlaneImageData.getPlaneSize(1);
+
+	YV12Buffer.resize(plane0Size + plane1Size);
+
+	// Copy the luma plane.
+	deMemcpy(YV12Buffer.data(), multiPlaneImageData.getPlanePtr(0), plane0Size);
+
+	// Deinterleave the Cr and Cb plane.
+	uint16_t *plane2 = (uint16_t*)multiPlaneImageData.getPlanePtr(1);
+	std::vector<deUint8>::size_type idx = plane0Size;
+	for (unsigned i = 0 ; i < plane1Size / 2; i ++)
+		YV12Buffer[idx++] = static_cast<deUint8>(plane2[i] & 0xFF);
+	for (unsigned i = 0 ; i < plane1Size / 2; i ++)
+		YV12Buffer[idx++] = static_cast<deUint8>((plane2[i] >> 8) & 0xFF);
+
+	return YV12Buffer;
+}
+
+bool checksumFrame (const ycbcr::MultiPlaneImageData& multiPlaneImageData, const std::string& referenceChecksum)
+{
+	std::vector<deUint8> yv12 = semiplanarToYV12(multiPlaneImageData);
+	std::string checksum = MD5SumBase16(yv12.data(), yv12.size());
+	return checksum == referenceChecksum;
 }
 
 } // video
