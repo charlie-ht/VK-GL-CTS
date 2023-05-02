@@ -532,6 +532,23 @@ vector<const char*> removeCoreExtensions (const deUint32 apiVersion, const vecto
 
 	// Remove any extension found in the core extension list.
 	const auto isNonCoreExtension = [&coreExtensions](const char* extName) {
+		std::vector<const char*> nvidia3050Blacklist = {
+				"VK_KHR_ray_tracing_position_fetch",
+				"VK_KHR_acceleration_structure",
+				"VK_KHR_ray_query",
+				"VK_KHR_ray_tracing_maintenance1",
+				"VK_KHR_ray_tracing_pipeline",
+				"VK_KHR_ray_tracing_position_fetch",
+				"VK_EXT_opacity_micromap", // requires ray_tracing_pipeline
+				"VK_EXT_pipeline_library_group_handles",  // requires ray_tracing_pipeline
+				"VK_NV_ray_tracing",
+				"VK_NV_ray_tracing_invocation_reorder",
+				"VK_NV_ray_tracing_motion_blur",
+				"VK_EXT_texture_compression_astc_hdr", // this is not a supported device ext according to vulkaninfo
+		};
+		for (const auto* blacklistedExt : nvidia3050Blacklist)
+			if (!strcmp(extName, blacklistedExt)) return false;
+
 		const auto isSameString = [&extName](const char* otherExtName) { return (std::strcmp(otherExtName, extName) == 0); };
 		return std::find_if(begin(coreExtensions), end(coreExtensions), isSameString) == end(coreExtensions);
 	};
