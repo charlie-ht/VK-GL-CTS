@@ -1,0 +1,12 @@
+//
+// Created by cturner on 5/18/23.
+//
+
+#ifndef DEQP_CORE_DEFAULT_VKTVIDEOPROFILE_HPP
+#define DEQP_CORE_DEFAULT_VKTVIDEOPROFILE_HPP
+
+class vktVideoProfile
+{
+};
+
+#endif //DEQP_CORE_DEFAULT_VKTVIDEOPROFILE_HPP
