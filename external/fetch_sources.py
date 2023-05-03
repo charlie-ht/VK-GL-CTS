@@ -334,11 +334,12 @@ PACKAGES = [
 		"git@github.com:open-source-parsers/jsoncpp.git",
 		"9059f5cad030ba11d37818847443a53918c327b1",
 		"jsoncpp"),
+	# FIXME: Use a fork for now while the CTS integration issues are worked on.
 	GitRepo(
-		"https://github.com/nvpro-samples/vk_video_samples.git",
-		None,
-		"7d68747d3524842afaf050c5e00a10f5b8c07904",
-		"video-parser"),
+		"https://github.com/charlie-ht/vk_video_samples.git",
+		"git@github.com:charlie-ht/vk_video_samples.git",
+		"b738a5a1f22c4cd762279a8141b7732fb8d1c9b2",
+		"nvidia-video-samples"),
 	GitRepo(
 		"https://github.com/Igalia/ESExtractor.git",
 		"git@github.com:Igalia/ESExtractor.git",

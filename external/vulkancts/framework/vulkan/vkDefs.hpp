@@ -89,7 +89,7 @@ template<HandleType Type>
 class Handle
 {
 public:
-				Handle		(void) {} // \note Left uninitialized on purpose
+				Handle		(void) : m_internal(0) {} // \note Left uninitialized on purpose
 				Handle		(deUint64 internal) : m_internal(internal) {}
 
 	Handle&		operator=	(deUint64 internal)					{ m_internal = internal; return *this;			}

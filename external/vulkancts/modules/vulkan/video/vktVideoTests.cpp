@@ -41,7 +41,6 @@ tcu::TestCaseGroup*	createTests (tcu::TestContext& testCtx)
 
 	group->addChild(createVideoCapabilitiesTests(testCtx));
 	group->addChild(createVideoDecodeTests(testCtx));
-
 	{
 		de::MovePtr<tcu::TestCaseGroup>	syncGroup(new tcu::TestCaseGroup(testCtx, "synchronization", ""));
 
@@ -67,5 +66,5 @@ tcu::TestCaseGroup*	createTests (tcu::TestContext& testCtx)
 	return group.release();
 }
 
-}	// video
-}	// vkt
+} // video
+} // vkt

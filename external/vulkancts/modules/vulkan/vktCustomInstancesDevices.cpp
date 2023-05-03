@@ -939,7 +939,7 @@ const vk::DeviceDriver& VideoDevice::getDeviceDriver (void)
 #endif
 }
 
-const deUint32& VideoDevice::getQueueFamilyIndexTransfer (void)
+deUint32 VideoDevice::getQueueFamilyIndexTransfer (void) const
 {
 #ifndef CTS_USES_VULKANSC
 	DE_ASSERT(m_queueFamilyTransfer != VK_QUEUE_FAMILY_IGNORED);
@@ -950,7 +950,7 @@ const deUint32& VideoDevice::getQueueFamilyIndexTransfer (void)
 #endif
 }
 
-const deUint32& VideoDevice::getQueueFamilyIndexDecode (void)
+deUint32 VideoDevice::getQueueFamilyIndexDecode (void) const
 {
 #ifndef CTS_USES_VULKANSC
 	DE_ASSERT(m_queueFamilyDecode != VK_QUEUE_FAMILY_IGNORED);
@@ -961,7 +961,7 @@ const deUint32& VideoDevice::getQueueFamilyIndexDecode (void)
 #endif
 }
 
-const deUint32& VideoDevice::getQueueFamilyIndexEncode (void)
+deUint32 VideoDevice::getQueueFamilyIndexEncode (void) const
 {
 #ifndef CTS_USES_VULKANSC
 	DE_ASSERT(m_queueFamilyEncode != VK_QUEUE_FAMILY_IGNORED);
@@ -972,7 +972,7 @@ const deUint32& VideoDevice::getQueueFamilyIndexEncode (void)
 #endif
 }
 
-const deUint32& VideoDevice::getQueueFamilyVideo (void)
+deUint32 VideoDevice::getQueueFamilyVideo (void) const
 {
 #ifndef CTS_USES_VULKANSC
 	const bool encode = isVideoEncodeOperation(m_videoCodecOperation);

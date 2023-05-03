@@ -2,7 +2,7 @@
  * Vulkan Conformance Tests
  * ------------------------
  *
- * Copyright (c) 2021 The Khronos Group Inc.
+ * Copyright (c) 2023 The Khronos Group Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,39 +18,32 @@
  *
  *//*!
  * \file
- * \brief Video Decoding Session tests
+ * \brief Video decoding tests
  *//*--------------------------------------------------------------------*/
 
 #include "vktVideoDecodeTests.hpp"
 #include "vktVideoTestUtils.hpp"
-#include "vktTestCase.hpp"
-#include "vktVideoPictureUtils.hpp"
 
-#include "tcuTextureUtil.hpp"
-#include "tcuVectorUtil.hpp"
 #include "tcuTestLog.hpp"
 #include "tcuPlatform.hpp"
 #include "tcuFunctionLibrary.hpp"
-#include "tcuImageCompare.hpp"
 
 #include <deDefs.h>
 #include "vkDefs.hpp"
-#include "vkBufferWithMemory.hpp"
 #include "vkImageWithMemory.hpp"
-#include "vkImageUtil.hpp"
-#include "vkBarrierUtil.hpp"
-#include "vkObjUtil.hpp"
 #include "vkCmdUtil.hpp"
-#include "vkTypeUtil.hpp"
 
 #ifdef DE_BUILD_VIDEO
-	#include "vktVideoSessionNvUtils.hpp"
 	#include "extESExtractor.hpp"
 	#include "vktVideoBaseDecodeUtils.hpp"
     #include "vktVideoReferenceChecksums.hpp"
-#endif
 
-#include <atomic>
+	#include "extNvidiaVideoParserIf.hpp"
+// FIXME: The samples repo is missing this internal include from their H265 decoder
+	#include "nvVulkanh265ScalingList.h"
+	#include <VulkanH264Decoder.h>
+	#include <VulkanH265Decoder.h>
+#endif
 
 namespace vkt
 {
@@ -62,254 +55,34 @@ using namespace vk;
 using namespace std;
 
 using de::MovePtr;
-using vkt::ycbcr::MultiPlaneImageData;
-
 
 enum TestType
 {
-	TEST_TYPE_H264_DECODE_I,							// Case 6
-	TEST_TYPE_H264_DECODE_I_P,							// Case 7
-	TEST_TYPE_H264_DECODE_I_P_B_13,						// Case 7a
-	TEST_TYPE_H264_DECODE_I_P_NOT_MATCHING_ORDER,		// Case 8
-	TEST_TYPE_H264_DECODE_I_P_B_13_NOT_MATCHING_ORDER,	// Case 8a
-	TEST_TYPE_H264_DECODE_QUERY_RESULT_WITH_STATUS,		// Case 9
-	TEST_TYPE_H264_DECODE_RESOLUTION_CHANGE,			// Case 17
-	TEST_TYPE_H264_DECODE_RESOLUTION_CHANGE_DPB,		// Case 18
-	TEST_TYPE_H264_DECODE_INTERLEAVED,					// Case 21
-	TEST_TYPE_H264_BOTH_DECODE_ENCODE_INTERLEAVED,		// Case 23
-	TEST_TYPE_H264_H265_DECODE_INTERLEAVED,				// Case 24
+	TEST_TYPE_H264_DECODE_I,						   // Case 6
+	TEST_TYPE_H264_DECODE_I_P,						   // Case 7
+	TEST_TYPE_H264_DECODE_I_P_B_13,					   // Case 7a
+	TEST_TYPE_H264_DECODE_I_P_NOT_MATCHING_ORDER,	   // Case 8
+	TEST_TYPE_H264_DECODE_I_P_B_13_NOT_MATCHING_ORDER, // Case 8a
+	TEST_TYPE_H264_DECODE_QUERY_RESULT_WITH_STATUS,	   // Case 9
+	TEST_TYPE_H264_DECODE_RESOLUTION_CHANGE,		   // Case 17
+	TEST_TYPE_H264_DECODE_RESOLUTION_CHANGE_DPB,	   // Case 18
+	TEST_TYPE_H264_DECODE_INTERLEAVED,				   // Case 21
+	TEST_TYPE_H264_BOTH_DECODE_ENCODE_INTERLEAVED,	   // Case 23
+	TEST_TYPE_H264_H265_DECODE_INTERLEAVED,			   // Case 24
 
-	TEST_TYPE_H265_DECODE_I,							// Case 15
-	TEST_TYPE_H265_DECODE_I_P,							// Case 16
-	TEST_TYPE_H265_DECODE_I_P_NOT_MATCHING_ORDER,		// Case 16-2
-	TEST_TYPE_H265_DECODE_I_P_B_13				,		// Case 16-3
-	TEST_TYPE_H265_DECODE_I_P_B_13_NOT_MATCHING_ORDER,	// Case 16-4
+	TEST_TYPE_H265_DECODE_I,						   // Case 15
+	TEST_TYPE_H265_DECODE_I_P,						   // Case 16
+	TEST_TYPE_H265_DECODE_I_P_NOT_MATCHING_ORDER,	   // Case 16-2
+	TEST_TYPE_H265_DECODE_I_P_B_13,					   // Case 16-3
+	TEST_TYPE_H265_DECODE_I_P_B_13_NOT_MATCHING_ORDER, // Case 16-4
 
 	TEST_TYPE_LAST
 };
 
-struct CaseDef
+static const std::string& frameReferenceChecksum(TestType test, int frameNumber)
 {
-	TestType	testType;
-};
-
-// Vulkan video is not supported on android platform
-// all external libraries, helper functions and test instances has been excluded
-#ifdef DE_BUILD_VIDEO
-DecodedFrame initDecodeFrame (void)
-{
-	DecodedFrame							frameTemplate =
+	switch (test)
 	{
-		-1,							//  int32_t				pictureIndex;
-		DE_NULL,					//  const ImageObject*	pDecodedImage;
-		VK_IMAGE_LAYOUT_UNDEFINED,	//  VkImageLayout		decodedImageLayout;
-		DE_NULL,					//  VkFence				frameCompleteFence;
-		DE_NULL,					//  VkFence				frameConsumerDoneFence;
-		DE_NULL,					//  VkSemaphore			frameCompleteSemaphore;
-		DE_NULL,					//  VkSemaphore			frameConsumerDoneSemaphore;
-		DE_NULL,					//  VkQueryPool			queryPool;
-		0,							//  int32_t				startQueryId;
-		0,							//  uint32_t			numQueries;
-		0,							//  uint64_t			timestamp;
-		0,							//  uint32_t			hasConsummerSignalFence : 1;
-		0,							//  uint32_t			hasConsummerSignalSemaphore : 1;
-		0,							//  int32_t				decodeOrder;
-		0,							//  int32_t				displayOrder;
-	};
-
-	return frameTemplate;
-}
-
-MovePtr<MultiPlaneImageData> getDecodedImage (const DeviceInterface&	vkd,
-											  VkDevice					device,
-											  Allocator&				allocator,
-											  VkImage					image,
-											  VkImageLayout				layout,
-											  VkFormat					format,
-											  VkExtent2D				codedExtent,
-											  deUint32					queueFamilyIndexTransfer,
-											  deUint32					queueFamilyIndexDecode)
-{
-	MovePtr<MultiPlaneImageData>	multiPlaneImageData				(new MultiPlaneImageData(format, tcu::UVec2(codedExtent.width, codedExtent.height)));
-	const VkQueue					queueDecode						= getDeviceQueue(vkd, device, queueFamilyIndexDecode, 0u);
-	const VkQueue					queueTransfer					= getDeviceQueue(vkd, device, queueFamilyIndexTransfer, 0u);
-	const VkImageSubresourceRange	imageSubresourceRange			= makeImageSubresourceRange(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
-	const VkImageMemoryBarrier2KHR	imageBarrierDecode				= makeImageMemoryBarrier2(VK_PIPELINE_STAGE_2_VIDEO_DECODE_BIT_KHR,
-																							  VK_ACCESS_2_VIDEO_DECODE_WRITE_BIT_KHR,
-																							  VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT_KHR,
-																							  VK_ACCESS_NONE_KHR,
-																							  layout,
-																							  VK_IMAGE_LAYOUT_GENERAL,
-																							  image,
-																							  imageSubresourceRange);
-	const VkImageMemoryBarrier2KHR	imageBarrierOwnershipDecode		= makeImageMemoryBarrier2(VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT_KHR,
-																							  VK_ACCESS_NONE_KHR,
-																							  VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT_KHR,
-																							  VK_ACCESS_NONE_KHR,
-																							  VK_IMAGE_LAYOUT_GENERAL,
-																							  VK_IMAGE_LAYOUT_GENERAL,
-																							  image,
-																							  imageSubresourceRange,
-																							  queueFamilyIndexDecode,
-																							  queueFamilyIndexTransfer);
-	const VkImageMemoryBarrier2KHR	imageBarrierOwnershipTransfer	= makeImageMemoryBarrier2(VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT_KHR,
-																							  VK_ACCESS_NONE_KHR,
-																							  VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT_KHR,
-																							  VK_ACCESS_NONE_KHR,
-																							  VK_IMAGE_LAYOUT_GENERAL,
-																							  VK_IMAGE_LAYOUT_GENERAL,
-																							  image,
-																							  imageSubresourceRange,
-																							  queueFamilyIndexDecode,
-																							  queueFamilyIndexTransfer);
-	const VkImageMemoryBarrier2KHR	imageBarrierTransfer			= makeImageMemoryBarrier2(VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
-																							  VK_ACCESS_2_TRANSFER_READ_BIT_KHR,
-																							  VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT_KHR,
-																							  VK_ACCESS_NONE_KHR,
-																							  VK_IMAGE_LAYOUT_GENERAL,
-																							  VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-																							  image,
-																							  imageSubresourceRange);
-	const Move<VkCommandPool>		cmdDecodePool					(makeCommandPool(vkd, device, queueFamilyIndexDecode));
-	const Move<VkCommandBuffer>		cmdDecodeBuffer					(allocateCommandBuffer(vkd, device, *cmdDecodePool, VK_COMMAND_BUFFER_LEVEL_PRIMARY));
-	const Move<VkCommandPool>		cmdTransferPool					(makeCommandPool(vkd, device, queueFamilyIndexTransfer));
-	const Move<VkCommandBuffer>		cmdTransferBuffer				(allocateCommandBuffer(vkd, device, *cmdTransferPool, VK_COMMAND_BUFFER_LEVEL_PRIMARY));
-	Move<VkSemaphore>				semaphore						= createSemaphore(vkd, device);
-	Move<VkFence>					decodeFence						= createFence(vkd, device);
-	Move<VkFence>					transferFence					= createFence(vkd, device);
-	VkFence							fences[]						= { *decodeFence, *transferFence };
-	const VkPipelineStageFlags		waitDstStageMask				= VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
-	const VkSubmitInfo				decodeSubmitInfo
-	{
-		VK_STRUCTURE_TYPE_SUBMIT_INFO,						// VkStructureType				sType;
-		DE_NULL,											// const void*					pNext;
-		0u,													// deUint32						waitSemaphoreCount;
-		DE_NULL,											// const VkSemaphore*			pWaitSemaphores;
-		DE_NULL,											// const VkPipelineStageFlags*	pWaitDstStageMask;
-		1u,													// deUint32						commandBufferCount;
-		&*cmdDecodeBuffer,									// const VkCommandBuffer*		pCommandBuffers;
-		1u,													// deUint32						signalSemaphoreCount;
-		&*semaphore,										// const VkSemaphore*			pSignalSemaphores;
-	};
-	const VkSubmitInfo				transferSubmitInfo
-	{
-		VK_STRUCTURE_TYPE_SUBMIT_INFO,						// VkStructureType				sType;
-		DE_NULL,											// const void*					pNext;
-		1u,													// deUint32						waitSemaphoreCount;
-		&*semaphore,										// const VkSemaphore*			pWaitSemaphores;
-		&waitDstStageMask,									// const VkPipelineStageFlags*	pWaitDstStageMask;
-		1u,													// deUint32						commandBufferCount;
-		&*cmdTransferBuffer,								// const VkCommandBuffer*		pCommandBuffers;
-		0u,													// deUint32						signalSemaphoreCount;
-		DE_NULL,											// const VkSemaphore*			pSignalSemaphores;
-	};
-
-	DEBUGLOG(std::cout << "getDecodedImage: " << image << " " << layout << std::endl);
-
-	beginCommandBuffer(vkd, *cmdDecodeBuffer, 0u);
-	cmdPipelineImageMemoryBarrier2(vkd, *cmdDecodeBuffer, &imageBarrierDecode);
-	cmdPipelineImageMemoryBarrier2(vkd, *cmdDecodeBuffer, &imageBarrierOwnershipDecode);
-	endCommandBuffer(vkd, *cmdDecodeBuffer);
-
-	beginCommandBuffer(vkd, *cmdTransferBuffer, 0u);
-	cmdPipelineImageMemoryBarrier2(vkd, *cmdTransferBuffer, &imageBarrierOwnershipTransfer);
-	cmdPipelineImageMemoryBarrier2(vkd, *cmdTransferBuffer, &imageBarrierTransfer);
-	endCommandBuffer(vkd, *cmdTransferBuffer);
-
-	VK_CHECK(vkd.queueSubmit(queueDecode, 1u, &decodeSubmitInfo, *decodeFence));
-	VK_CHECK(vkd.queueSubmit(queueTransfer, 1u, &transferSubmitInfo, *transferFence));
-
-	VK_CHECK(vkd.waitForFences(device, DE_LENGTH_OF_ARRAY(fences), fences, DE_TRUE, ~0ull));
-
-	vkt::ycbcr::downloadImage(vkd, device, queueFamilyIndexTransfer, allocator, image, multiPlaneImageData.get(), 0, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-
-	return multiPlaneImageData;
-}
-
-class VideoDecodeTestInstance : public VideoBaseTestInstance
-{
-public:
-	typedef std::pair<tcu::IVec3, tcu::IVec3> ReferencePixel;
-
-										VideoDecodeTestInstance					(Context&						context,
-																				 const CaseDef&					data);
-										~VideoDecodeTestInstance				(void);
-
-	std::string							getTestVideoData						(void);
-
-	tcu::TestStatus						iterate									(void);
-	tcu::TestStatus						iterateSingleFrame						(void);
-	tcu::TestStatus						iterateDoubleFrame						(void);
-	tcu::TestStatus						iterateMultipleFrame					(void);
-
-protected:
-	CaseDef								m_caseDef;
-	MovePtr<VideoBaseDecoder>			m_decoder;
-	VkVideoCodecOperationFlagBitsKHR	m_videoCodecOperation;
-	int32_t								m_frameCountTrigger;
-	bool								m_queryWithStatusRequired;
-};
-
-VideoDecodeTestInstance::VideoDecodeTestInstance (Context& context, const CaseDef& data)
-	: VideoBaseTestInstance			(context)
-	, m_caseDef						(data)
-	, m_decoder						(new VideoBaseDecoder(context))
-	, m_videoCodecOperation			(VK_VIDEO_CODEC_OPERATION_NONE_KHR)
-	, m_frameCountTrigger			(0)
-	, m_queryWithStatusRequired		(false)
-{
-	const bool		queryResultWithStatus		= m_caseDef.testType == TEST_TYPE_H264_DECODE_QUERY_RESULT_WITH_STATUS;
-	const bool		twoCachedPicturesSwapped	=  queryResultWithStatus
-												|| m_caseDef.testType == TEST_TYPE_H264_DECODE_I_P_NOT_MATCHING_ORDER
-												|| m_caseDef.testType == TEST_TYPE_H265_DECODE_I_P_NOT_MATCHING_ORDER;
-	const bool		randomOrSwapped				=  twoCachedPicturesSwapped
-												|| m_caseDef.testType == TEST_TYPE_H264_DECODE_I_P_B_13_NOT_MATCHING_ORDER
-												|| m_caseDef.testType == TEST_TYPE_H265_DECODE_I_P_B_13_NOT_MATCHING_ORDER;
-	const uint32_t	gopSize						= m_caseDef.testType == TEST_TYPE_H264_DECODE_RESOLUTION_CHANGE ? 15
-												: m_caseDef.testType == TEST_TYPE_H264_DECODE_RESOLUTION_CHANGE_DPB ? 15
-												: 0;
-	const uint32_t	gopCount					= m_caseDef.testType == TEST_TYPE_H264_DECODE_RESOLUTION_CHANGE ? 2
-												: m_caseDef.testType == TEST_TYPE_H264_DECODE_RESOLUTION_CHANGE_DPB ? 1
-												: 0;
-	const bool		submitDuringRecord			=  m_caseDef.testType == TEST_TYPE_H264_DECODE_I
-												|| m_caseDef.testType == TEST_TYPE_H264_DECODE_I_P
-												|| m_caseDef.testType == TEST_TYPE_H265_DECODE_I
-												|| m_caseDef.testType == TEST_TYPE_H265_DECODE_I_P;
-	const bool		submitAfter					= !submitDuringRecord;
-
-	m_frameCountTrigger		= m_caseDef.testType == TEST_TYPE_H264_DECODE_I									? 1
-							: m_caseDef.testType == TEST_TYPE_H264_DECODE_I_P								? 2
-							: m_caseDef.testType == TEST_TYPE_H264_DECODE_I_P_B_13							? 13 * 2
-							: m_caseDef.testType == TEST_TYPE_H264_DECODE_I_P_NOT_MATCHING_ORDER			? 2
-							: m_caseDef.testType == TEST_TYPE_H264_DECODE_I_P_B_13_NOT_MATCHING_ORDER		? 13 * 2
-							: m_caseDef.testType == TEST_TYPE_H264_DECODE_QUERY_RESULT_WITH_STATUS			? 2
-							: m_caseDef.testType == TEST_TYPE_H264_DECODE_RESOLUTION_CHANGE					? 15 * 2
-							: m_caseDef.testType == TEST_TYPE_H264_DECODE_RESOLUTION_CHANGE_DPB				? 15 * 2
-							: m_caseDef.testType == TEST_TYPE_H265_DECODE_I									? 1
-							: m_caseDef.testType == TEST_TYPE_H265_DECODE_I_P								? 2
-							: m_caseDef.testType == TEST_TYPE_H265_DECODE_I_P_NOT_MATCHING_ORDER			? 2
-							: m_caseDef.testType == TEST_TYPE_H265_DECODE_I_P_B_13							? 13 * 2
-							: m_caseDef.testType == TEST_TYPE_H265_DECODE_I_P_B_13_NOT_MATCHING_ORDER		? 13 * 2
-							: 0;
-
-	m_decoder->setDecodeParameters(randomOrSwapped, queryResultWithStatus, m_frameCountTrigger, submitAfter, gopSize, gopCount);
-
-	m_videoCodecOperation	= de::inBounds(m_caseDef.testType, TEST_TYPE_H264_DECODE_I, TEST_TYPE_H265_DECODE_I) ? VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR
-							: de::inBounds(m_caseDef.testType, TEST_TYPE_H265_DECODE_I, TEST_TYPE_LAST) ? VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR
-							: VK_VIDEO_CODEC_OPERATION_NONE_KHR;
-
-	DE_ASSERT(m_videoCodecOperation != VK_VIDEO_CODEC_OPERATION_NONE_KHR);
-
-	m_queryWithStatusRequired = (m_caseDef.testType == TEST_TYPE_H264_DECODE_QUERY_RESULT_WITH_STATUS);
-}
-
-VideoDecodeTestInstance::~VideoDecodeTestInstance (void)
-{
-}
-
-static const std::string& frameReferenceChecksum (TestType test, int frameNumber)
-{
-	switch (test) {
 		case TEST_TYPE_H264_DECODE_I:
 		case TEST_TYPE_H264_DECODE_I_P:
 		case TEST_TYPE_H264_DECODE_I_P_NOT_MATCHING_ORDER:
@@ -329,551 +102,363 @@ static const std::string& frameReferenceChecksum (TestType test, int frameNumber
 		case TEST_TYPE_H265_DECODE_I_P_B_13:
 		case TEST_TYPE_H265_DECODE_I_P_B_13_NOT_MATCHING_ORDER:
 			return TestReferenceChecksums::jellyfishHEVC.at(frameNumber);
-		default: TCU_THROW(InternalError, "Unknown test type");
+		default:
+			TCU_THROW(InternalError, "Unknown test type");
 	}
 }
 
-std::string VideoDecodeTestInstance::getTestVideoData (void)
+struct TestDefinition
 {
-	switch (m_caseDef.testType)
+	TestType		   testType;
+
+	const char*		   videoClipFilename;
+
+	// Used for the default size of the parser's bitstream buffer, file size of clip rounded up to the next power of 2.
+	size_t			   videoClipSizeInBytes;
+
+	// Once the frame with this number is processed, the test stops.
+	size_t			   framesToCheck;
+
+	VkVideoCoreProfile profile;
+	// TODO: Video profile & level
+
+	TestDefinition(TestType				type,
+				   const char*			filename,
+				   size_t				filesize,
+				   size_t				numFrames,
+				   VkVideoCoreProfile&& coreProfile)
+		: testType(type)
+		, videoClipFilename(filename)
+		, videoClipSizeInBytes(filesize)
+		, framesToCheck(numFrames)
+		, profile(coreProfile)
 	{
-		case TEST_TYPE_H264_DECODE_I:
-		case TEST_TYPE_H264_DECODE_I_P:
-		case TEST_TYPE_H264_DECODE_I_P_NOT_MATCHING_ORDER:
-		case TEST_TYPE_H264_DECODE_QUERY_RESULT_WITH_STATUS:	return getVideoDataClipA();
-		case TEST_TYPE_H264_DECODE_I_P_B_13:
-		case TEST_TYPE_H264_DECODE_I_P_B_13_NOT_MATCHING_ORDER:	return getVideoDataClipH264G13();
-		case TEST_TYPE_H264_DECODE_RESOLUTION_CHANGE:
-		case TEST_TYPE_H264_DECODE_RESOLUTION_CHANGE_DPB:		return getVideoDataClipC();
-		case TEST_TYPE_H265_DECODE_I:
-		case TEST_TYPE_H265_DECODE_I_P:
-		case TEST_TYPE_H265_DECODE_I_P_NOT_MATCHING_ORDER:		return getVideoDataClipD();
-		case TEST_TYPE_H265_DECODE_I_P_B_13:
-		case TEST_TYPE_H265_DECODE_I_P_B_13_NOT_MATCHING_ORDER:	return getVideoDataClipH265G13();
-
-		default:												TCU_THROW(InternalError, "Unknown testType");
-	}
-}
-
-tcu::TestStatus VideoDecodeTestInstance::iterate (void)
-{
-	if (m_frameCountTrigger == 1)
-		return iterateSingleFrame();
-	else if (m_frameCountTrigger == 2)
-		return iterateDoubleFrame();
-	else
-		return iterateMultipleFrame();
-}
-
-vk::VkExtensionProperties getExtensionVersion (VkVideoCodecOperationFlagBitsKHR videoCodecOperation)
-{
-	static const vk::VkExtensionProperties h264StdExtensionVersion = { VK_STD_VULKAN_VIDEO_CODEC_H264_DECODE_EXTENSION_NAME, VK_STD_VULKAN_VIDEO_CODEC_H264_DECODE_SPEC_VERSION };
-	static const vk::VkExtensionProperties h265StdExtensionVersion = { VK_STD_VULKAN_VIDEO_CODEC_H265_DECODE_EXTENSION_NAME, VK_STD_VULKAN_VIDEO_CODEC_H265_DECODE_SPEC_VERSION };
-
-	if (videoCodecOperation == VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR) {
-        return h264StdExtensionVersion;
-    } else if (videoCodecOperation == VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR) {
-        return h265StdExtensionVersion;
-    }
-
-    TCU_THROW(InternalError, "Unsupported Codec Type");
-}
-
-
-tcu::TestStatus VideoDecodeTestInstance::iterateSingleFrame (void)
-{
-	tcu::TestLog&							log							= m_context.getTestContext().getLog();
-	const VideoDevice::VideoDeviceFlags		videoDeviceFlags			= VideoDevice::VIDEO_DEVICE_FLAG_REQUIRE_SYNC2_OR_NOT_SUPPORTED
-																		| (m_queryWithStatusRequired ? VideoDevice::VIDEO_DEVICE_FLAG_QUERY_WITH_STATUS_FOR_DECODE_SUPPORT : 0);
-	const VkDevice							device						= getDeviceSupportingQueue(VK_QUEUE_VIDEO_DECODE_BIT_KHR | VK_QUEUE_TRANSFER_BIT, m_videoCodecOperation, videoDeviceFlags);
-	const DeviceInterface&					vkd							= getDeviceDriver();
-	const deUint32							queueFamilyIndexDecode		= getQueueFamilyIndexDecode();
-	const deUint32							queueFamilyIndexTransfer	= getQueueFamilyIndexTransfer();
-	Allocator&								allocator					= getAllocator();
-	std::string								videoData					= getTestVideoData();
-	VkExtensionProperties					stdExtensionVersion			= getExtensionVersion(m_videoCodecOperation);
-
-	MovePtr<IfcVulkanVideoDecodeParser>		vulkanVideoDecodeParser		(m_decoder->GetNvFuncs()->createIfcVulkanVideoDecodeParser(m_videoCodecOperation, &stdExtensionVersion));
-	bool									videoStreamHasEnded			= false;
-	int32_t									framesInQueue				= 0;
-	int32_t									frameNumber					= 0;
-	int32_t									framesCorrect				= 0;
-	DecodedFrame							frame						= initDecodeFrame();
-	ESEDemuxer								demuxer(videoData, log);
-
-	m_decoder->initialize(m_videoCodecOperation, vkd, device, queueFamilyIndexTransfer, queueFamilyIndexDecode, allocator);
-
-	if (!vulkanVideoDecodeParser->initialize(dynamic_cast<NvidiaVulkanParserVideoDecodeClient*>(m_decoder.get())))
-	{
-		TCU_THROW(InternalError, "vulkanVideoDecodeParser->initialize()");
 	}
 
-	while (framesInQueue > 0 || !videoStreamHasEnded)
-	{
-		framesInQueue = m_decoder->GetVideoFrameBuffer()->DequeueDecodedPicture(&frame);
+	// Whether to perform video status queries during coding operations.
+	bool						  queryResultWithStatus{false};
 
-		while (framesInQueue == 0 && !videoStreamHasEnded)
+	VideoDevice::VideoDeviceFlags requiredDeviceFlags() const
+	{
+		return VideoDevice::VIDEO_DEVICE_FLAG_REQUIRE_SYNC2_OR_NOT_SUPPORTED |
+			   (queryResultWithStatus ? VideoDevice::VIDEO_DEVICE_FLAG_QUERY_WITH_STATUS_FOR_DECODE_SUPPORT : 0);
+	}
+
+	const VkExtensionProperties* extensionProperties() const
+	{
+		static const VkExtensionProperties h264StdExtensionVersion = {
+			VK_STD_VULKAN_VIDEO_CODEC_H264_DECODE_EXTENSION_NAME, VK_STD_VULKAN_VIDEO_CODEC_H264_DECODE_SPEC_VERSION};
+		static const VkExtensionProperties h265StdExtensionVersion = {
+			VK_STD_VULKAN_VIDEO_CODEC_H265_DECODE_EXTENSION_NAME, VK_STD_VULKAN_VIDEO_CODEC_H265_DECODE_SPEC_VERSION};
+
+		switch (profile.GetCodecType())
 		{
-			if (!videoStreamHasEnded)
-			{
-				deUint8*	pData			= 0;
-				deInt64		size			= 0;
-				const bool	demuxerSuccess	= demuxer.Demux(&pData, &size);
-				const bool	parserSuccess	= vulkanVideoDecodeParser->parseByteStream(pData, size);
-
-				if (!demuxerSuccess || !parserSuccess)
-					videoStreamHasEnded = true;
-			}
-
-			framesInQueue = m_decoder->GetVideoFrameBuffer()->DequeueDecodedPicture(&frame);
-		}
-
-		if (frame.pictureIndex >= 0)
-		{
-			const VkExtent2D				imageExtent	= frame.pDecodedImage->getExtent();
-			const VkImage					image		= frame.pDecodedImage->getImage();
-			const VkFormat					format		= frame.pDecodedImage->getFormat();
-			const VkImageLayout				layout		= frame.decodedImageLayout;
-			MovePtr<MultiPlaneImageData>	resultImage	= getDecodedImage(vkd, device, allocator, image, layout, format, imageExtent, queueFamilyIndexTransfer, queueFamilyIndexDecode);
-
-			if (checksumFrame(*resultImage, frameReferenceChecksum(m_caseDef.testType, frameNumber)))
-				framesCorrect++;
-
-			m_decoder->ReleaseDisplayedFrame(&frame);
-			frameNumber++;
-
-			if (frameNumber >= 1)
+			case VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR:
+				return &h264StdExtensionVersion;
+			case VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR:
+				return &h265StdExtensionVersion;
+			default:
+				tcu::die("Unsupported video codec %s\n", util::codecToName(profile.GetCodecType()));
 				break;
 		}
-	}
 
-	if (!vulkanVideoDecodeParser->deinitialize())
-	{
-		TCU_THROW(InternalError, "vulkanVideoDecodeParser->deinitialize()");
-	}
+		TCU_THROW(InternalError, "Unsupported codec");
+	};
+} DecodeTestCases[] = {TestDefinition(TEST_TYPE_H264_DECODE_I,
+									  "vulkan/video/clip-a.h264",
+									  2 * 1024 * 1024,
+									  1,
+									  VkVideoCoreProfile(VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR,
+														 VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
+														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+														 STD_VIDEO_H264_PROFILE_IDC_HIGH)),
+					   TestDefinition(TEST_TYPE_H264_DECODE_I_P_B_13,
+									  "vulkan/video/jellyfish-250-mbps-4k-uhd-GOB-IPB13.h264",
+									  4 * 1024 * 1024,
+									  26,
+									  VkVideoCoreProfile(VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR,
+														 VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
+														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+														 STD_VIDEO_H264_PROFILE_IDC_MAIN)),
+					   TestDefinition(TEST_TYPE_H265_DECODE_I,
+									  "vulkan/video/clip-d.h265",
+									  8 * 1024,
+									  1,
+									  VkVideoCoreProfile(VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR,
+														 VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
+														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+														 STD_VIDEO_H265_PROFILE_IDC_MAIN)),
+					   TestDefinition(TEST_TYPE_H265_DECODE_I_P_B_13,
+									  "vulkan/video/jellyfish-250-mbps-4k-uhd-GOB-IPB13.h265",
+									  4 * 1024 * 1024,
+									  26,
+									  VkVideoCoreProfile(VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR,
+														 VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
+														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+														 STD_VIDEO_H265_PROFILE_IDC_MAIN))};
 
-	if (framesCorrect > 0 && framesCorrect == frameNumber)
-		return tcu::TestStatus::pass("pass");
-	else
-		return tcu::TestStatus::fail(de::toString(framesCorrect) + " out of " + de::toString(frameNumber) + " frames rendered correctly");
-}
+// Vulkan video is not supported on android platform
+// all external libraries, helper functions and test instances has been excluded
+#ifdef DE_BUILD_VIDEO
 
-tcu::TestStatus VideoDecodeTestInstance::iterateDoubleFrame (void)
-{
-	tcu::TestLog&							log							= m_context.getTestContext().getLog();
-	const VideoDevice::VideoDeviceFlags		videoDeviceFlags			= VideoDevice::VIDEO_DEVICE_FLAG_REQUIRE_SYNC2_OR_NOT_SUPPORTED
-																		| (m_queryWithStatusRequired ? VideoDevice::VIDEO_DEVICE_FLAG_QUERY_WITH_STATUS_FOR_DECODE_SUPPORT : 0);
-	const VkDevice							device						= getDeviceSupportingQueue(VK_QUEUE_VIDEO_DECODE_BIT_KHR | VK_QUEUE_TRANSFER_BIT, m_videoCodecOperation, videoDeviceFlags);
-	const DeviceInterface&					vkd							= getDeviceDriver();
-	const deUint32							queueFamilyIndexDecode		= getQueueFamilyIndexDecode();
-	const deUint32							queueFamilyIndexTransfer	= getQueueFamilyIndexTransfer();
-	Allocator&								allocator					= getAllocator();
-	std::string								videoData					= getTestVideoData();
-	VkExtensionProperties					stdExtensionVersion			= getExtensionVersion(m_videoCodecOperation);
-
-	MovePtr<IfcVulkanVideoDecodeParser>		vulkanVideoDecodeParser		(m_decoder->GetNvFuncs()->createIfcVulkanVideoDecodeParser(m_videoCodecOperation, &stdExtensionVersion));
-	bool									videoStreamHasEnded			= false;
-	int32_t									framesInQueue				= 0;
-	int32_t									frameNumber					= 0;
-	int32_t									framesCorrect				= 0;
-	DecodedFrame							frames[2]					= { initDecodeFrame(), initDecodeFrame() };
-	ESEDemuxer								demuxer(videoData, log);
-
-	m_decoder->initialize(m_videoCodecOperation, vkd, device, queueFamilyIndexTransfer, queueFamilyIndexDecode, allocator);
-
-	if (!vulkanVideoDecodeParser->initialize(dynamic_cast<NvidiaVulkanParserVideoDecodeClient*>(m_decoder.get())))
-	{
-		TCU_THROW(InternalError, "vulkanVideoDecodeParser->initialize()");
-	}
-
-	while (framesInQueue > 0 || !videoStreamHasEnded)
-	{
-		framesInQueue = m_decoder->GetVideoFrameBuffer()->GetDisplayFramesCount();
-
-		while (framesInQueue < 2 && !videoStreamHasEnded)
-		{
-			if (!videoStreamHasEnded)
-			{
-				deUint8*	pData			= 0;
-				deInt64		size			= 0;
-				const bool	demuxerSuccess	= demuxer.Demux(&pData, &size);
-				const bool	parserSuccess	= vulkanVideoDecodeParser->parseByteStream(pData, size);
-
-				if (!demuxerSuccess || !parserSuccess)
-					videoStreamHasEnded = true;
-			}
-
-			framesInQueue = m_decoder->GetVideoFrameBuffer()->GetDisplayFramesCount();
-		}
-
-		for (size_t frameNdx = 0; frameNdx < 2; ++frameNdx)
-		{
-			DecodedFrame&	frame	= frames[frameNdx];
-
-			m_decoder->GetVideoFrameBuffer()->DequeueDecodedPicture(&frame);
-		}
-
-		for (size_t frameNdx = 0; frameNdx < 2; ++frameNdx)
-		{
-			DecodedFrame&		frame		= frames[frameNdx];
-			const VkExtent2D	imageExtent	= frame.pDecodedImage->getExtent();
-			const VkImage		image		= frame.pDecodedImage->getImage();
-			const VkFormat		format		= frame.pDecodedImage->getFormat();
-			const VkImageLayout	layout		= frame.decodedImageLayout;
-
-			if (frame.pictureIndex >= 0)
-			{
-				const bool						assumeCorrect	= m_caseDef.testType == TEST_TYPE_H264_DECODE_QUERY_RESULT_WITH_STATUS;
-				MovePtr<MultiPlaneImageData>	resultImage		= getDecodedImage(vkd, device, allocator, image, layout, format, imageExtent, queueFamilyIndexTransfer, queueFamilyIndexDecode);
-
-				if (assumeCorrect || checksumFrame(*resultImage, frameReferenceChecksum(m_caseDef.testType, frameNumber)))
-					framesCorrect++;
-
-				m_decoder->ReleaseDisplayedFrame(&frame);
-				frameNumber++;
-
-				if (frameNumber >= DE_LENGTH_OF_ARRAY(frames))
-					break;
-			}
-		}
-
-		if (frameNumber >= DE_LENGTH_OF_ARRAY(frames))
-			break;
-	}
-
-	if (!vulkanVideoDecodeParser->deinitialize())
-		TCU_THROW(InternalError, "vulkanVideoDecodeParser->deinitialize()");
-
-	if (framesCorrect > 0 && framesCorrect == frameNumber)
-		return tcu::TestStatus::pass("pass");
-	else
-		return tcu::TestStatus::fail(de::toString(framesCorrect) + " out of " + de::toString(frameNumber) + " frames rendered correctly");
-}
-
-tcu::TestStatus VideoDecodeTestInstance::iterateMultipleFrame (void)
-{
-	tcu::TestLog&						log							= m_context.getTestContext().getLog();
-	const VideoDevice::VideoDeviceFlags	videoDeviceFlags			= VideoDevice::VIDEO_DEVICE_FLAG_REQUIRE_SYNC2_OR_NOT_SUPPORTED
-																	| (m_queryWithStatusRequired ? VideoDevice::VIDEO_DEVICE_FLAG_QUERY_WITH_STATUS_FOR_DECODE_SUPPORT : 0);
-	const VkDevice						device						= getDeviceSupportingQueue(VK_QUEUE_VIDEO_DECODE_BIT_KHR | VK_QUEUE_TRANSFER_BIT, m_videoCodecOperation, videoDeviceFlags);
-	const DeviceInterface&				vkd							= getDeviceDriver();
-	const deUint32						queueFamilyIndexDecode		= getQueueFamilyIndexDecode();
-	const deUint32						queueFamilyIndexTransfer	= getQueueFamilyIndexTransfer();
-	Allocator&							allocator					= getAllocator();
-	std::string							videoData					= getTestVideoData();
-	VkExtensionProperties				stdExtensionVersion			= getExtensionVersion(m_videoCodecOperation);
-
-	MovePtr<IfcVulkanVideoDecodeParser>	vulkanVideoDecodeParser		(m_decoder->GetNvFuncs()->createIfcVulkanVideoDecodeParser(m_videoCodecOperation, &stdExtensionVersion));
-	bool								videoStreamHasEnded			= false;
-	int32_t								framesInQueue				= 0;
-	int32_t								frameNumber					= 0;
-	int32_t								framesCorrect				= 0;
-	vector<DecodedFrame>				frames						(m_frameCountTrigger, initDecodeFrame());
-	ESEDemuxer							demuxer(videoData, log);
-
-	m_decoder->initialize(m_videoCodecOperation, vkd, device, queueFamilyIndexTransfer, queueFamilyIndexDecode, allocator);
-
-	if (!vulkanVideoDecodeParser->initialize(dynamic_cast<NvidiaVulkanParserVideoDecodeClient*>(m_decoder.get())))
-		TCU_THROW(InternalError, "vulkanVideoDecodeParser->initialize()");
-
-	while (framesInQueue > 0 || !videoStreamHasEnded)
-	{
-		framesInQueue = m_decoder->GetVideoFrameBuffer()->GetDisplayFramesCount();
-
-		while (framesInQueue < m_frameCountTrigger && !videoStreamHasEnded)
-		{
-			if (!videoStreamHasEnded)
-			{
-				deUint8*	pData			= 0;
-				deInt64		size			= 0;
-				const bool	demuxerSuccess	= demuxer.Demux(&pData, &size);
-				const bool	parserSuccess	= vulkanVideoDecodeParser->parseByteStream(pData, size);
-
-				if (!demuxerSuccess || !parserSuccess)
-					videoStreamHasEnded = true;
-			}
-
-			framesInQueue = m_decoder->GetVideoFrameBuffer()->GetDisplayFramesCount();
-		}
-
-		for (int32_t frameNdx = 0; frameNdx < m_frameCountTrigger; ++frameNdx)
-		{
-			DecodedFrame&	frame	= frames[frameNdx];
-
-			m_decoder->GetVideoFrameBuffer()->DequeueDecodedPicture(&frame);
-		}
-
-		bool	isResolutionChangeTest = m_caseDef.testType == TEST_TYPE_H264_DECODE_RESOLUTION_CHANGE || m_caseDef.testType == TEST_TYPE_H264_DECODE_RESOLUTION_CHANGE_DPB;
-
-		for (int32_t frameNdx = 0; frameNdx < m_frameCountTrigger; ++frameNdx)
-		{
-			DecodedFrame&		frame		= frames[frameNdx];
-			VkExtent2D	imageExtent	= frame.pDecodedImage->getExtent();
-			const VkImage		image		= frame.pDecodedImage->getImage();
-			const VkFormat		format		= frame.pDecodedImage->getFormat();
-			const VkImageLayout	layout		= frame.decodedImageLayout;
-
-			if (frame.pictureIndex >= 0)
-			{
-				// FIXME: The active coded extent is not being tracked
-				// in the CTS yet. This is a hack for the resolution
-				// change case until that core problem is properly
-				// addressed.
-				if (isResolutionChangeTest && frameNdx >= 15) {
-					imageExtent.width = 176;
-					imageExtent.height = 144;
-				}
-				MovePtr<MultiPlaneImageData>	resultImage	= getDecodedImage(vkd, device, allocator, image, layout, format, imageExtent, queueFamilyIndexTransfer, queueFamilyIndexDecode);
-
-				if (checksumFrame(*resultImage, frameReferenceChecksum(m_caseDef.testType, frameNumber)))
-					framesCorrect++;
-
-				m_decoder->ReleaseDisplayedFrame(&frame);
-				frameNumber++;
-			}
-		}
-	}
-
-	if (!vulkanVideoDecodeParser->deinitialize())
-		TCU_THROW(InternalError, "vulkanVideoDecodeParser->deinitialize()");
-
-	if (framesCorrect > 0 && framesCorrect == frameNumber)
-		return tcu::TestStatus::pass("pass");
-	else
-		return tcu::TestStatus::fail(de::toString(framesCorrect) + " out of " + de::toString(frameNumber) + " frames rendered correctly");
-}
-
-class DualVideoDecodeTestInstance : public VideoBaseTestInstance
+class VideoDecodeTestInstance : public VideoBaseTestInstance
 {
 public:
-										DualVideoDecodeTestInstance		(Context&					context,
-																		 const CaseDef&				data);
-										~DualVideoDecodeTestInstance	(void);
+	VideoDecodeTestInstance(Context& context, const TestDefinition& testDefinition);
 
-	std::string							getTestVideoData				(bool						primary);
-	const std::string&					getFrameReferenceChecksum		(bool						primary,
-																		 int						frameNumber);
-	tcu::TestStatus						iterate							(void);
+	std::string getTestVideoData(void);
+
+	tcu::TestStatus iterate(void);
 
 protected:
-	CaseDef								m_caseDef;
-	MovePtr<VideoBaseDecoder>			m_decoder1;
-	MovePtr<VideoBaseDecoder>			m_decoder2;
-	VkVideoCodecOperationFlagBitsKHR	m_videoCodecOperation;
-	VkVideoCodecOperationFlagBitsKHR	m_videoCodecOperation1;
-	VkVideoCodecOperationFlagBitsKHR	m_videoCodecOperation2;
-	int32_t								m_frameCountTrigger;
+	TestDefinition			  m_testDefinition;
+	MovePtr<VideoBaseDecoder> m_decoder{};
+	static_assert(sizeof(DeviceContext) < 128, "DeviceContext has grown bigger than expected!");
+	DeviceContext m_deviceContext;
 };
 
-DualVideoDecodeTestInstance::DualVideoDecodeTestInstance (Context& context, const CaseDef& data)
-	: VideoBaseTestInstance		(context)
-	, m_caseDef					(data)
-	, m_decoder1				(new VideoBaseDecoder(context))
-	, m_decoder2				(new VideoBaseDecoder(context))
-	, m_videoCodecOperation		(VK_VIDEO_CODEC_OPERATION_NONE_KHR)
-	, m_videoCodecOperation1	(VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR)
-	, m_videoCodecOperation2	(VK_VIDEO_CODEC_OPERATION_NONE_KHR)
-	, m_frameCountTrigger		(10)
+VideoDecodeTestInstance::VideoDecodeTestInstance(Context& context, const TestDefinition& testDefinition)
+	: VideoBaseTestInstance(context), m_testDefinition(testDefinition)
 {
-	const bool	randomOrSwapped			= false;
-	const bool	queryResultWithStatus	= false;
+	VkDevice device = getDeviceSupportingQueue(VK_QUEUE_VIDEO_DECODE_BIT_KHR | VK_QUEUE_TRANSFER_BIT,
+											   m_testDefinition.profile.GetCodecType(),
+											   m_testDefinition.requiredDeviceFlags());
 
-	m_decoder1->setDecodeParameters(randomOrSwapped, queryResultWithStatus, m_frameCountTrigger + 1);
-	m_decoder2->setDecodeParameters(randomOrSwapped, queryResultWithStatus, m_frameCountTrigger + 1);
+	m_deviceContext.context = &m_context;
+	m_deviceContext.device	= device;
+	m_deviceContext.phys	= m_context.getPhysicalDevice();
+	m_deviceContext.vd		= &m_videoDevice;
+	// TODO: Support for multiple queues / multithreading
+	m_deviceContext.transferQueue =
+		getDeviceQueue(m_context.getDeviceInterface(), device, m_videoDevice.getQueueFamilyIndexTransfer(), 0);
+	m_deviceContext.decodeQueue =
+		getDeviceQueue(m_context.getDeviceInterface(), device, m_videoDevice.getQueueFamilyIndexDecode(), 0);
 
-	m_videoCodecOperation2	= m_caseDef.testType == TEST_TYPE_H264_DECODE_INTERLEAVED				? VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR
-							: m_caseDef.testType == TEST_TYPE_H264_BOTH_DECODE_ENCODE_INTERLEAVED	? VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_EXT
-							: m_caseDef.testType == TEST_TYPE_H264_H265_DECODE_INTERLEAVED			? VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR
-							: VK_VIDEO_CODEC_OPERATION_NONE_KHR;
+	VkSharedBaseObj<VulkanVideoFrameBuffer> vkVideoFrameBuffer;
+	VK_CHECK(VulkanVideoFrameBuffer::Create(&m_deviceContext, vkVideoFrameBuffer));
 
-	DE_ASSERT(m_videoCodecOperation2 != VK_VIDEO_CODEC_OPERATION_NONE_KHR);
-
-	m_videoCodecOperation = static_cast<VkVideoCodecOperationFlagBitsKHR>(m_videoCodecOperation1 | m_videoCodecOperation2);
-
-	if (m_videoCodecOperation2 == VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_EXT)
-		TCU_THROW(NotSupportedError, "NOT IMPLEMENTED: REQUIRES ENCODE QUEUE");
+	m_decoder = de::newMovePtr<VideoBaseDecoder>(
+		&m_deviceContext, m_testDefinition.profile, m_testDefinition.framesToCheck, vkVideoFrameBuffer);
 }
 
-DualVideoDecodeTestInstance::~DualVideoDecodeTestInstance (void)
+static void createParser(TestDefinition& params, VkParserVideoDecodeClient* decoderClient, VkSharedBaseObj<VulkanVideoDecodeParser>& parser)
 {
-}
+	const VkParserInitDecodeParameters pdParams = {
+		NV_VULKAN_VIDEO_PARSER_API_VERSION,
+		decoderClient,
+		static_cast<uint32_t>(params.videoClipSizeInBytes),
+		32, // FIXME: Currently failing to be able to get video caps early enough on NVIDIA
+		32,
+		0,
+		0,
+		nullptr,
+		true,
+	};
 
-std::string DualVideoDecodeTestInstance::getTestVideoData (bool primary)
-{
-	switch (m_caseDef.testType)
+	const VkExtensionProperties* pStdExtensionVersion = params.extensionProperties();
+	DE_ASSERT(pStdExtensionVersion);
+
+	switch(params.profile.GetCodecType())
 	{
-		case TEST_TYPE_H264_DECODE_INTERLEAVED:					return primary ? getVideoDataClipA() : getVideoDataClipB();
-		case TEST_TYPE_H264_BOTH_DECODE_ENCODE_INTERLEAVED:		return getVideoDataClipA();
-		case TEST_TYPE_H264_H265_DECODE_INTERLEAVED:			return primary ? getVideoDataClipA() : getVideoDataClipD();
-		default:												TCU_THROW(InternalError, "Unknown testType");
-	}
-}
-
-const std::string& DualVideoDecodeTestInstance::getFrameReferenceChecksum (bool primary, int frameNumber)
-{
-	switch (m_caseDef.testType)
-	{
-		case TEST_TYPE_H264_DECODE_INTERLEAVED:					return primary ? TestReferenceChecksums::clipA.at(frameNumber) : TestReferenceChecksums::clipB.at(frameNumber);
-		case TEST_TYPE_H264_BOTH_DECODE_ENCODE_INTERLEAVED: /* fallthru */
-		case TEST_TYPE_H264_H265_DECODE_INTERLEAVED:			return TestReferenceChecksums::clipA.at(frameNumber);
-		default:												TCU_THROW(InternalError, "Unknown testType");
-	}
-}
-
-tcu::TestStatus DualVideoDecodeTestInstance::iterate (void)
-{
-	tcu::TestLog&						log							= m_context.getTestContext().getLog();
-	const VideoDevice::VideoDeviceFlags	videoDeviceFlags			= VideoDevice::VIDEO_DEVICE_FLAG_REQUIRE_SYNC2_OR_NOT_SUPPORTED;
-	const VkDevice						device						= getDeviceSupportingQueue(VK_QUEUE_VIDEO_DECODE_BIT_KHR | VK_QUEUE_TRANSFER_BIT, m_videoCodecOperation, videoDeviceFlags);
-	const DeviceInterface&				vkd							= getDeviceDriver();
-	const deUint32						queueFamilyIndexDecode		= getQueueFamilyIndexDecode();
-	const deUint32						queueFamilyIndexTransfer	= getQueueFamilyIndexTransfer();
-	Allocator&							allocator					= getAllocator();
-	std::string							videoData1					= getTestVideoData(true);
-	std::string							videoData2					= getTestVideoData(false);
-
-	VkExtensionProperties				stdExtensionVersion1		= getExtensionVersion(m_videoCodecOperation1);
-	VkExtensionProperties				stdExtensionVersion2		= getExtensionVersion(m_videoCodecOperation2);
-
-	MovePtr<IfcVulkanVideoDecodeParser>	vulkanVideoDecodeParser1	(m_decoder1->GetNvFuncs()->createIfcVulkanVideoDecodeParser(m_videoCodecOperation1, &stdExtensionVersion1));
-	MovePtr<IfcVulkanVideoDecodeParser>	vulkanVideoDecodeParser2	(m_decoder2->GetNvFuncs()->createIfcVulkanVideoDecodeParser(m_videoCodecOperation2, &stdExtensionVersion2));
-	int32_t								frameNumber					= 0;
-	int32_t								framesCorrect				= 0;
-	vector<DecodedFrame>				frames						(m_frameCountTrigger, initDecodeFrame());
-	ESEDemuxer							demuxer1(videoData1, log);
-	ESEDemuxer							demuxer2(videoData2, log);
-
-	m_decoder1->initialize(m_videoCodecOperation1, vkd, device, queueFamilyIndexTransfer, queueFamilyIndexDecode, allocator);
-
-	if (!vulkanVideoDecodeParser1->initialize(dynamic_cast<NvidiaVulkanParserVideoDecodeClient*>(m_decoder1.get())))
-	{
-		TCU_THROW(InternalError, "vulkanVideoDecodeParser->initialize()");
-	}
-
-	m_decoder2->initialize(m_videoCodecOperation2, vkd, device, queueFamilyIndexTransfer, queueFamilyIndexDecode, allocator);
-
-	if (!vulkanVideoDecodeParser2->initialize(dynamic_cast<NvidiaVulkanParserVideoDecodeClient*>(m_decoder2.get())))
-	{
-		TCU_THROW(InternalError, "vulkanVideoDecodeParser->initialize()");
-	}
-
-	{
-		bool	videoStreamHasEnded	= false;
-		int32_t	framesInQueue		= 0;
-
-		while (framesInQueue < m_frameCountTrigger && !videoStreamHasEnded)
+		case VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR:
 		{
-			deUint8*	pData			= 0;
-			deInt64		size			= 0;
-			const bool	demuxerSuccess	= demuxer1.Demux(&pData, &size);
-			const bool	parserSuccess	= vulkanVideoDecodeParser1->parseByteStream(pData, size);
-
-			if (!demuxerSuccess || !parserSuccess)
-				videoStreamHasEnded = true;
-
-			framesInQueue = m_decoder1->GetVideoFrameBuffer()->GetDisplayFramesCount();
+			if (strcmp(pStdExtensionVersion->extensionName, VK_STD_VULKAN_VIDEO_CODEC_H264_DECODE_EXTENSION_NAME) || pStdExtensionVersion->specVersion != VK_STD_VULKAN_VIDEO_CODEC_H264_DECODE_SPEC_VERSION) {
+				tcu::die("The requested decoder h.264 Codec STD version is NOT supported. The supported decoder h.264 Codec STD version is version %d of %s\n",
+								 VK_STD_VULKAN_VIDEO_CODEC_H264_DECODE_SPEC_VERSION, VK_STD_VULKAN_VIDEO_CODEC_H264_DECODE_EXTENSION_NAME);
+			}
+			VkSharedBaseObj<VulkanH264Decoder> nvVideoH264DecodeParser( new VulkanH264Decoder(params.profile.GetCodecType()));
+			parser = nvVideoH264DecodeParser;
+			break;
 		}
-	}
-
-	{
-		bool	videoStreamHasEnded	= false;
-		int32_t	framesInQueue		= 0;
-
-		while (framesInQueue < m_frameCountTrigger && !videoStreamHasEnded)
+		case VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR:
 		{
-			deUint8*	pData			= 0;
-			deInt64		size			= 0;
-			const bool	demuxerSuccess	= demuxer2.Demux(&pData, &size);
-			const bool	parserSuccess	= vulkanVideoDecodeParser2->parseByteStream(pData, size);
-
-			if (!demuxerSuccess || !parserSuccess)
-				videoStreamHasEnded = true;
-
-			framesInQueue = m_decoder2->GetVideoFrameBuffer()->GetDisplayFramesCount();
+			if (strcmp(pStdExtensionVersion->extensionName, VK_STD_VULKAN_VIDEO_CODEC_H265_DECODE_EXTENSION_NAME) || pStdExtensionVersion->specVersion != VK_STD_VULKAN_VIDEO_CODEC_H265_DECODE_SPEC_VERSION) {
+			tcu::die("The requested decoder h.265 Codec STD version is NOT supported. The supported decoder h.265 Codec STD version is version %d of %s\n",
+					 VK_STD_VULKAN_VIDEO_CODEC_H265_DECODE_SPEC_VERSION, VK_STD_VULKAN_VIDEO_CODEC_H265_DECODE_EXTENSION_NAME);
+			}
+			VkSharedBaseObj<VulkanH265Decoder> nvVideoH265DecodeParser( new VulkanH265Decoder(params.profile.GetCodecType()));
+			parser = nvVideoH265DecodeParser;
+			break;
 		}
+		default:
+			TCU_FAIL("Unsupported codec type!");
 	}
 
-	m_decoder1->DecodeCachedPictures(m_decoder2.get());
+	VK_CHECK(parser->Initialize(&pdParams));
+}
 
-	for (size_t decoderNdx = 0; decoderNdx < 2; ++decoderNdx)
+tcu::TestStatus VideoDecodeTestInstance::iterate(void)
+{
+	tcu::TestLog&							 log = m_context.getTestContext().getLog();
+	ESEDemuxer								 demuxer(m_testDefinition.videoClipFilename, log);
+	VkSharedBaseObj<VulkanVideoDecodeParser> parser;
+	createParser(m_testDefinition, m_decoder.get(), parser);
+
+	bool					  videoStreamHasEnded = false;
+	int32_t					  frameNumber		  = 0;
+	int32_t					  framesCorrect		  = 0;
+	std::vector<DecodedFrame> frameData(6);
+	for (auto& frame : frameData)
+		frame.Reset();
+	size_t frameDataIdx		= 0;
+
+	auto   processNextChunk = [&demuxer, &parser]()
 	{
-		const bool			firstDecoder	= (decoderNdx == 0);
-		VideoBaseDecoder*	decoder			= firstDecoder ? m_decoder1.get() : m_decoder2.get();
-		const bool			firstClip		= firstDecoder ? true
-											: m_caseDef.testType == TEST_TYPE_H264_H265_DECODE_INTERLEAVED;
-		for (int32_t frameNdx = 0; frameNdx < m_frameCountTrigger; ++frameNdx)
+		deUint8*				pData		   = 0;
+		deInt64					size		   = 0;
+		bool					demuxerSuccess = demuxer.Demux(&pData, &size);
+
+		VkParserBitstreamPacket pkt;
+		pkt.pByteStream			 = pData; // Ptr to byte stream data decode/display event
+		pkt.nDataLength			 = size; // Data length for this packet
+		pkt.llPTS				 = 0; // Presentation Time Stamp for this packet (clock rate specified at initialization)
+		pkt.bEOS				 = !demuxerSuccess; // true if this is an End-Of-Stream packet (flush everything)
+		pkt.bPTSValid			 = false; // true if llPTS is valid (also used to detect frame boundaries for VC1 SP/MP)
+		pkt.bDiscontinuity		 = false; // true if DecMFT is signalling a discontinuity
+		pkt.bPartialParsing		 = 0; // 0: parse entire packet, 1: parse until next
+		pkt.bEOP				 = false; // true if the packet in pByteStream is exactly one frame
+		pkt.pbSideData			 = nullptr; // Auxiliary encryption information
+		pkt.nSideDataLength		 = 0; // Auxiliary encrypton information length
+
+		size_t	   parsedBytes	 = 0;
+		const bool parserSuccess = parser->ParseByteStream(&pkt, &parsedBytes);
+		if (videoLoggingEnabled())
+			tcu::print("Parsed %ld bytes\n", parsedBytes);
+
+		return !(demuxerSuccess && parserSuccess);
+	};
+
+	auto getNextFrame = [this, &videoStreamHasEnded, &processNextChunk](DecodedFrame* pFrame)
+	{
+		// The below call to DequeueDecodedPicture allows returning the next frame without parsing of the stream.
+		// Parsing is only done when there are no more frames in the queue.
+		int32_t framesInQueue = m_decoder->GetVideoFrameBuffer()->DequeueDecodedPicture(pFrame);
+
+		// Loop until a frame (or more) is parsed and added to the queue.
+		while ((framesInQueue == 0) && !videoStreamHasEnded)
 		{
-			decoder->GetVideoFrameBuffer()->DequeueDecodedPicture(&frames[frameNdx]);
 
-			DecodedFrame&		frame		= frames[frameNdx];
-			const VkExtent2D	imageExtent	= frame.pDecodedImage->getExtent();
-			const VkImage		image		= frame.pDecodedImage->getImage();
-			const VkFormat		format		= frame.pDecodedImage->getFormat();
-			const VkImageLayout	layout		= frame.decodedImageLayout;
+			videoStreamHasEnded = processNextChunk();
 
-			if (frame.pictureIndex >= 0)
+			framesInQueue		= m_decoder->GetVideoFrameBuffer()->DequeueDecodedPicture(pFrame);
+		}
+
+		if ((framesInQueue == 0) && videoStreamHasEnded)
+		{
+			return -1;
+		}
+
+		return framesInQueue;
+	};
+
+	auto onFrame = [this, &frameData, &frameDataIdx, &getNextFrame](const DecodedFrame** outFrame)
+	{
+		auto&		  vk				= m_deviceContext.getDeviceDriver();
+		auto		  device			= m_deviceContext.device;
+		DecodedFrame& frame				= frameData[frameDataIdx];
+		DecodedFrame* pLastDecodedFrame = &frame;
+
+		// Make sure the frame complete fence signaled (video frame is processed) before returning the frame.
+		if (pLastDecodedFrame->frameCompleteFence != VkFence())
+		{
+			VkResult result = vk.waitForFences(device, 1, &pLastDecodedFrame->frameCompleteFence, true, 100 * 1000 * 1000 /* 100 mSec */);
+			assert(result == VK_SUCCESS);
+			if (result != VK_SUCCESS)
 			{
-				MovePtr<MultiPlaneImageData> resultImage = getDecodedImage(vkd, device, allocator, image, layout, format, imageExtent, queueFamilyIndexTransfer, queueFamilyIndexDecode);
-
-				if (checksumFrame(*resultImage, getFrameReferenceChecksum(firstClip, frameNdx)))
-					framesCorrect++;
-
-				decoder->ReleaseDisplayedFrame(&frame);
-				frameNumber++;
+				tcu::print("\nERROR: WaitForFences() result: 0x%x\n", result);
+			}
+			result = vk.getFenceStatus(device, pLastDecodedFrame->frameCompleteFence);
+			assert(result == VK_SUCCESS);
+			if (result != VK_SUCCESS)
+			{
+				tcu::print("\nERROR: GetFenceStatus() result: 0x%x\n", result);
 			}
 		}
+
+		m_decoder->ReleaseDisplayedFrame(pLastDecodedFrame);
+		pLastDecodedFrame->Reset();
+
+		int framesRemaining = getNextFrame(pLastDecodedFrame);
+
+		if (pLastDecodedFrame)
+		{
+			if (videoLoggingEnabled())
+				std::cout << "<= Wait on picIdx: " << pLastDecodedFrame->pictureIndex
+						  << "\t\tdisplayWidth: " << pLastDecodedFrame->displayWidth
+						  << "\t\tdisplayHeight: " << pLastDecodedFrame->displayHeight
+						  << "\t\tdisplayOrder: " << pLastDecodedFrame->displayOrder
+						  << "\tdecodeOrder: " << pLastDecodedFrame->decodeOrder
+						  << "\ttimestamp " << pLastDecodedFrame->timestamp
+						  << "\tdstImageView " << (pLastDecodedFrame->outputImageView ? pLastDecodedFrame->outputImageView->GetImageResource()->GetImage() : VkImage())
+						  << std::endl;
+			if (outFrame)
+				*outFrame = pLastDecodedFrame;
+		}
+		frameDataIdx = (frameDataIdx + 1) % frameData.size();
+		return framesRemaining;
+	};
+
+	int framesRemaining = 0;
+	do
+	{
+		const DecodedFrame* pOutFrame = nullptr;
+		framesRemaining				  = onFrame(&pOutFrame);
+		if (framesRemaining > 0 && pOutFrame)
+		{
+			const VkExtent2D	imageExtent{(deUint32)pOutFrame->displayWidth, (deUint32)pOutFrame->displayHeight};
+			const VkImage		image		= pOutFrame->outputImageView->GetImageResource()->GetImage();
+			const VkFormat		format		= pOutFrame->outputImageView->GetImageResource()->GetImageCreateInfo().format;
+			const VkImageLayout layout		= VK_IMAGE_LAYOUT_VIDEO_DECODE_DPB_KHR;
+			auto				resultImage = getDecodedImage(m_deviceContext.getDeviceDriver(),
+												  m_deviceContext.device,
+												  m_deviceContext.allocator(),
+												  image,
+												  layout,
+												  format,
+												  imageExtent,
+												  m_deviceContext.transferQueueFamilyIdx(),
+												  m_deviceContext.decodeQueueFamilyIdx());
+
+			if (checksumFrame(*resultImage, frameReferenceChecksum(m_testDefinition.testType, frameNumber)))
+				framesCorrect++;
+			frameNumber++;
+		}
 	}
-
-	if (!vulkanVideoDecodeParser2->deinitialize())
-		TCU_THROW(InternalError, "vulkanVideoDecodeParser->deinitialize()");
-
-	if (!vulkanVideoDecodeParser1->deinitialize())
-		TCU_THROW(InternalError, "vulkanVideoDecodeParser->deinitialize()");
+	while (framesRemaining > 0 || !videoStreamHasEnded);
 
 	if (framesCorrect > 0 && framesCorrect == frameNumber)
-		return tcu::TestStatus::pass("pass");
+		return tcu::TestStatus::pass(de::toString(framesCorrect) + " correctly decoded frames");
 	else
 		return tcu::TestStatus::fail(de::toString(framesCorrect) + " out of " + de::toString(frameNumber) + " frames rendered correctly");
 }
 
 #endif // #ifdef DE_BUILD_VIDEO
 
-class VideoDecodeTestCase : public TestCase
+class VideoDecodeTestCase : public vkt::TestCase
 {
-	public:
-							VideoDecodeTestCase		(tcu::TestContext& context, const char* name, const char* desc, const CaseDef caseDef);
-							~VideoDecodeTestCase	(void);
+public:
+	VideoDecodeTestCase(tcu::TestContext& context, const char* name, const char* desc, TestDefinition testDefinition)
+		: vkt::TestCase(context, name, desc), m_testDefinition(testDefinition)
+	{
+	}
 
-	virtual TestInstance*	createInstance			(Context& context) const;
-	virtual void			checkSupport			(Context& context) const;
+	TestInstance* createInstance(Context& context) const override;
+	void		  checkSupport(Context& context) const override;
 
 private:
-	CaseDef					m_caseDef;
+	TestDefinition m_testDefinition;
 };
-
-VideoDecodeTestCase::VideoDecodeTestCase (tcu::TestContext& context, const char* name, const char* desc, const CaseDef caseDef)
-	: vkt::TestCase	(context, name, desc)
-	, m_caseDef		(caseDef)
-{
-}
-
-VideoDecodeTestCase::~VideoDecodeTestCase	(void)
-{
-}
 
 void VideoDecodeTestCase::checkSupport (Context& context) const
 {
-#if (DE_PTR_SIZE != 8)
-	// Issue #4253: https://gitlab.khronos.org/Tracker/vk-gl-cts/-/issues/4253
-	// These tests rely on external libraries to do the video parsing,
-	// and those libraries are only available as 64-bit at this time.
-	TCU_THROW(NotSupportedError, "CTS is not built 64-bit so cannot use the 64-bit video parser library");
-#endif
-
 	context.requireDeviceFunctionality("VK_KHR_video_queue");
 	context.requireDeviceFunctionality("VK_KHR_synchronization2");
 
-	switch (m_caseDef.testType)
+	switch (m_testDefinition.testType)
 	{
 		case TEST_TYPE_H264_DECODE_I:
 		case TEST_TYPE_H264_DECODE_I_P:
@@ -911,8 +496,7 @@ void VideoDecodeTestCase::checkSupport (Context& context) const
 
 TestInstance* VideoDecodeTestCase::createInstance (Context& context) const
 {
-// Vulkan video is unsupported for android platform
-	switch (m_caseDef.testType)
+	switch (m_testDefinition.testType)
 	{
 		case TEST_TYPE_H264_DECODE_I:
 		case TEST_TYPE_H264_DECODE_I_P:
@@ -929,7 +513,7 @@ TestInstance* VideoDecodeTestCase::createInstance (Context& context) const
 		case TEST_TYPE_H265_DECODE_I_P_B_13_NOT_MATCHING_ORDER:
 		{
 #ifdef DE_BUILD_VIDEO
-			return new VideoDecodeTestInstance(context, m_caseDef);
+			return new VideoDecodeTestInstance(context, m_testDefinition);
 #endif
 		}
 		case TEST_TYPE_H264_DECODE_INTERLEAVED:
@@ -937,7 +521,7 @@ TestInstance* VideoDecodeTestCase::createInstance (Context& context) const
 		case TEST_TYPE_H264_H265_DECODE_INTERLEAVED:
 		{
 #ifdef DE_BUILD_VIDEO
-			return new DualVideoDecodeTestInstance(context, m_caseDef);
+			TCU_THROW(NotSupportedError, "These tests need to be reimplemented");
 #endif
 		}
 		default:
@@ -978,18 +562,13 @@ tcu::TestCaseGroup*	createVideoDecodeTests (tcu::TestContext& testCtx)
 {
 	MovePtr<tcu::TestCaseGroup>	group	(new tcu::TestCaseGroup(testCtx, "decode", "Video decoding session tests"));
 
-	for (int testTypeNdx = 0; testTypeNdx < TEST_TYPE_LAST; ++testTypeNdx)
+	for (const auto& tc : DecodeTestCases)
 	{
-		const TestType	testType	= static_cast<TestType>(testTypeNdx);
-		const CaseDef	caseDef		=
-		{
-			testType,	//  TestType	testType;
-		};
-
-		group->addChild(new VideoDecodeTestCase(testCtx, getTestName(testType), "", caseDef));
+		group->addChild(new VideoDecodeTestCase(testCtx, getTestName(tc.testType), "", tc));
 	}
 
 	return group.release();
 }
+
 }	// video
 }	// vkt
