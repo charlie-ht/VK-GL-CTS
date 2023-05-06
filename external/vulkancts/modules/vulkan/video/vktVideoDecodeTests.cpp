@@ -291,6 +291,30 @@ static void createParser(TestDefinition& params, VkParserVideoDecodeClient* deco
 	VK_CHECK(parser->Initialize(&pdParams));
 }
 
+static std::vector<deUint8> semiplanarToYV12(const ycbcr::MultiPlaneImageData& multiPlaneImageData)
+{
+	DE_ASSERT(multiPlaneImageData.getFormat() == VK_FORMAT_G8_B8R8_2PLANE_420_UNORM);
+
+	std::vector<deUint8> YV12Buffer;
+	size_t plane0Size = multiPlaneImageData.getPlaneSize(0);
+	size_t plane1Size = multiPlaneImageData.getPlaneSize(1);
+
+	YV12Buffer.resize(plane0Size + plane1Size);
+
+	// Copy the luma plane.
+	deMemcpy(YV12Buffer.data(), multiPlaneImageData.getPlanePtr(0), plane0Size);
+
+	// Deinterleave the Cr and Cb plane.
+	uint16_t *plane2 = (uint16_t*)multiPlaneImageData.getPlanePtr(1);
+	std::vector<deUint8>::size_type idx = plane0Size;
+	for (unsigned i = 0 ; i < plane1Size / 2; i ++)
+		YV12Buffer[idx++] = static_cast<deUint8>(plane2[i] & 0xFF);
+	for (unsigned i = 0 ; i < plane1Size / 2; i ++)
+		YV12Buffer[idx++] = static_cast<deUint8>((plane2[i] >> 8) & 0xFF);
+
+	return YV12Buffer;
+}
+
 tcu::TestStatus VideoDecodeTestInstance::iterate(void)
 {
 	tcu::TestLog&							 log = m_context.getTestContext().getLog();
@@ -402,7 +426,18 @@ tcu::TestStatus VideoDecodeTestInstance::iterate(void)
 		return framesRemaining;
 	};
 
-	int framesRemaining = 0;
+#if 1
+#ifdef _WIN32
+	FILE* output = fopen("C:\\Users\\Igalia\\cts-raw.yv12", "wb");
+#else
+	FILE* output = fopen("/tmp/cts-raw.yv12", "wb");
+#endif
+#endif
+
+	int	  framesRemaining = 0;
+	std::vector<int> incorrectFrames;
+	std::vector<int> correctFrames;
+
 	do
 	{
 		const DecodedFrame* pOutFrame = nullptr;
@@ -423,17 +458,39 @@ tcu::TestStatus VideoDecodeTestInstance::iterate(void)
 												  m_deviceContext.transferQueueFamilyIdx(),
 												  m_deviceContext.decodeQueueFamilyIdx());
 
-			if (checksumFrame(*resultImage, frameReferenceChecksum(m_testDefinition.testType, frameNumber)))
+#if 1
+			auto bytes = semiplanarToYV12(*resultImage);
+			fwrite(bytes.data(), 1, bytes.size(), output);
+#endif
+			if (checksumFrame(*resultImage, frameReferenceChecksum(m_testDefinition.testType, frameNumber))) {
 				framesCorrect++;
+				correctFrames.push_back(frameNumber);
+			} else {
+				incorrectFrames.push_back(frameNumber);
+			}
 			frameNumber++;
 		}
 	}
 	while (framesRemaining > 0 || !videoStreamHasEnded);
 
+#if 1
+	fclose(output);
+#endif
 	if (framesCorrect > 0 && framesCorrect == frameNumber)
 		return tcu::TestStatus::pass(de::toString(framesCorrect) + " correctly decoded frames");
-	else
-		return tcu::TestStatus::fail(de::toString(framesCorrect) + " out of " + de::toString(frameNumber) + " frames rendered correctly");
+	else {
+		stringstream ss;
+		ss << framesCorrect << " out of " << frameNumber << " frames rendered correctly (";
+		if (correctFrames.size() < incorrectFrames.size()) {
+			ss << "correct frames: ";
+			for (int i : correctFrames) ss << i << " ";
+		} else {
+			ss << "incorrect frames: ";
+			for (int i : incorrectFrames) ss << i << " ";
+		}
+		ss << ")";
+		return tcu::TestStatus::fail(ss.str());
+	}
 }
 
 #endif // #ifdef DE_BUILD_VIDEO
