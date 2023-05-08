@@ -60,6 +60,7 @@ enum TestType
 {
 	TEST_TYPE_H264_DECODE_I,						   // Case 6
 	TEST_TYPE_H264_DECODE_I_P,						   // Case 7
+	TEST_TYPE_H264_DECODE_CLIP_A,
 	TEST_TYPE_H264_DECODE_I_P_B_13,					   // Case 7a
 	TEST_TYPE_H264_DECODE_I_P_NOT_MATCHING_ORDER,	   // Case 8
 	TEST_TYPE_H264_DECODE_I_P_B_13_NOT_MATCHING_ORDER, // Case 8a
@@ -72,6 +73,7 @@ enum TestType
 
 	TEST_TYPE_H265_DECODE_I,						   // Case 15
 	TEST_TYPE_H265_DECODE_I_P,						   // Case 16
+	TEST_TYPE_H265_DECODE_CLIP_D,
 	TEST_TYPE_H265_DECODE_I_P_NOT_MATCHING_ORDER,	   // Case 16-2
 	TEST_TYPE_H265_DECODE_I_P_B_13,					   // Case 16-3
 	TEST_TYPE_H265_DECODE_I_P_B_13_NOT_MATCHING_ORDER, // Case 16-4
@@ -85,6 +87,7 @@ static const std::string& frameReferenceChecksum(TestType test, int frameNumber)
 	{
 		case TEST_TYPE_H264_DECODE_I:
 		case TEST_TYPE_H264_DECODE_I_P:
+		case TEST_TYPE_H264_DECODE_CLIP_A:
 		case TEST_TYPE_H264_DECODE_I_P_NOT_MATCHING_ORDER:
 		case TEST_TYPE_H264_DECODE_QUERY_RESULT_WITH_STATUS:
 			return TestReferenceChecksums::clipA.at(frameNumber);
@@ -96,6 +99,7 @@ static const std::string& frameReferenceChecksum(TestType test, int frameNumber)
 			return TestReferenceChecksums::clipC.at(frameNumber);
 		case TEST_TYPE_H265_DECODE_I:
 		case TEST_TYPE_H265_DECODE_I_P:
+		case TEST_TYPE_H265_DECODE_CLIP_D:
 		case TEST_TYPE_H265_DECODE_I_P_NOT_MATCHING_ORDER:
 			// Clip A and clip D have the same reference checksums.
 			return TestReferenceChecksums::clipA.at(frameNumber);
@@ -173,6 +177,15 @@ struct TestDefinition
 														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
 														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
 														 STD_VIDEO_H264_PROFILE_IDC_HIGH)),
+					   TestDefinition(TEST_TYPE_H264_DECODE_CLIP_A,
+									  "vulkan/video/clip-a.h264",
+									  2 * 1024 * 1024,
+									  30,
+									  VkVideoCoreProfile(VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR,
+														 VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
+														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+														 STD_VIDEO_H264_PROFILE_IDC_HIGH)),
 					   TestDefinition(TEST_TYPE_H264_DECODE_I_P,
 									  "vulkan/video/clip-a.h264",
 									  2 * 1024 * 1024,
@@ -204,6 +217,15 @@ struct TestDefinition
 									  "vulkan/video/clip-d.h265",
 									  8 * 1024,
 									  2,
+									  VkVideoCoreProfile(VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR,
+														 VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
+														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+														 STD_VIDEO_H265_PROFILE_IDC_MAIN)),
+					   TestDefinition(TEST_TYPE_H265_DECODE_CLIP_D,
+									  "vulkan/video/clip-d.h265",
+									  8 * 1024,
+									  30,
 									  VkVideoCoreProfile(VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR,
 														 VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
 														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
@@ -542,6 +564,7 @@ void VideoDecodeTestCase::checkSupport (Context& context) const
 	{
 		case TEST_TYPE_H264_DECODE_I:
 		case TEST_TYPE_H264_DECODE_I_P:
+		case TEST_TYPE_H264_DECODE_CLIP_A:
 		case TEST_TYPE_H264_DECODE_I_P_NOT_MATCHING_ORDER:
 		case TEST_TYPE_H264_DECODE_I_P_B_13:
 		case TEST_TYPE_H264_DECODE_I_P_B_13_NOT_MATCHING_ORDER:
@@ -556,6 +579,7 @@ void VideoDecodeTestCase::checkSupport (Context& context) const
 		}
 		case TEST_TYPE_H265_DECODE_I:
 		case TEST_TYPE_H265_DECODE_I_P:
+		case TEST_TYPE_H265_DECODE_CLIP_D:
 		case TEST_TYPE_H265_DECODE_I_P_NOT_MATCHING_ORDER:
 		case TEST_TYPE_H265_DECODE_I_P_B_13:
 		case TEST_TYPE_H265_DECODE_I_P_B_13_NOT_MATCHING_ORDER:
@@ -583,11 +607,13 @@ TestInstance* VideoDecodeTestCase::createInstance (Context& context) const
 		case TEST_TYPE_H264_DECODE_I_P_NOT_MATCHING_ORDER:
 		case TEST_TYPE_H264_DECODE_I_P_B_13:
 		case TEST_TYPE_H264_DECODE_I_P_B_13_NOT_MATCHING_ORDER:
+		case TEST_TYPE_H264_DECODE_CLIP_A:
 		case TEST_TYPE_H264_DECODE_QUERY_RESULT_WITH_STATUS:
 		case TEST_TYPE_H264_DECODE_RESOLUTION_CHANGE:
 		case TEST_TYPE_H264_DECODE_RESOLUTION_CHANGE_DPB:
 		case TEST_TYPE_H265_DECODE_I:
 		case TEST_TYPE_H265_DECODE_I_P:
+		case TEST_TYPE_H265_DECODE_CLIP_D:
 		case TEST_TYPE_H265_DECODE_I_P_NOT_MATCHING_ORDER:
 		case TEST_TYPE_H265_DECODE_I_P_B_13:
 		case TEST_TYPE_H265_DECODE_I_P_B_13_NOT_MATCHING_ORDER:
@@ -619,6 +645,7 @@ const char* getTestName (const TestType testType)
 	{
 		case TEST_TYPE_H264_DECODE_I:							return "h264_i";
 		case TEST_TYPE_H264_DECODE_I_P:							return "h264_i_p";
+		case TEST_TYPE_H264_DECODE_CLIP_A:						return "h264_clip_a";
 		case TEST_TYPE_H264_DECODE_I_P_NOT_MATCHING_ORDER:		return "h264_i_p_not_matching_order";
 		case TEST_TYPE_H264_DECODE_I_P_B_13:					return "h264_i_p_b_13";
 		case TEST_TYPE_H264_DECODE_I_P_B_13_NOT_MATCHING_ORDER:	return "h264_i_p_b_13_not_matching_order";
@@ -630,6 +657,7 @@ const char* getTestName (const TestType testType)
 		case TEST_TYPE_H264_H265_DECODE_INTERLEAVED:			return "h264_h265_interleaved";
 		case TEST_TYPE_H265_DECODE_I:							return "h265_i";
 		case TEST_TYPE_H265_DECODE_I_P:							return "h265_i_p";
+		case TEST_TYPE_H265_DECODE_CLIP_D:						return "h265_clip_d";
 		case TEST_TYPE_H265_DECODE_I_P_NOT_MATCHING_ORDER:		return "h265_i_p_not_matching_order";
 		case TEST_TYPE_H265_DECODE_I_P_B_13:					return "h265_i_p_b_13";
 		case TEST_TYPE_H265_DECODE_I_P_B_13_NOT_MATCHING_ORDER:	return "h265_i_p_b_13_not_matching_order";
