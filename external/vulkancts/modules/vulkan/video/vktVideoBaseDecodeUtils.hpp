@@ -1056,6 +1056,7 @@ de::MovePtr<vkt::ycbcr::MultiPlaneImageData> getDecodedImage (const DeviceInterf
 															  VkImageLayout				layout,
 															  VkFormat					format,
 															  VkExtent2D				codedExtent,
+															 VkSemaphore 				frameCompleteSem,
 															  deUint32					queueFamilyIndexTransfer,
 															  deUint32					queueFamilyIndexDecode);
 

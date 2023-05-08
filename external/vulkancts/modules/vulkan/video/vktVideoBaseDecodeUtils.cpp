@@ -1687,7 +1687,7 @@ int32_t VideoBaseDecoder::DecodePictureWithParameters(VkParserPerFrameDecodePara
 				  << pPicParams->decodeFrameInfo.dstPictureResource.imageViewBinding << std::endl;
 	}
 
-	const bool checkDecodeIdleSync = true; // For fence/sync/idle debugging
+	const bool checkDecodeIdleSync = false; // For fence/sync/idle debugging
 	if (checkDecodeIdleSync)
 	{ // For fence/sync debugging
 		if (frameCompleteFence == VkFence())
@@ -4292,110 +4292,146 @@ int32_t VkParserVideoPictureParameters::Release()
 	return ret;
 }
 
-MovePtr<vkt::ycbcr::MultiPlaneImageData> getDecodedImage (const DeviceInterface&   vkd,
-                                                                                         VkDevice                                      device,
-                                                                                         Allocator&                            allocator,
-                                                                                         VkImage                                       image,
-                                                                                         VkImageLayout                         layout,
-                                                                                         VkFormat                                      format,
-                                                                                         VkExtent2D                            codedExtent,
-                                                                                         deUint32                                      queueFamilyIndexTransfer,
-                                                                                         deUint32                                      queueFamilyIndexDecode)
+MovePtr<vkt::ycbcr::MultiPlaneImageData> getDecodedImage(const DeviceInterface& vkd,
+														 VkDevice				device,
+														 Allocator&				allocator,
+														 VkImage				image,
+														 VkImageLayout			layout,
+														 VkFormat				format,
+														 VkExtent2D				codedExtent,
+														 VkSemaphore			frameCompleteSem,
+														 deUint32				queueFamilyIndexTransfer,
+														 deUint32				queueFamilyIndexDecode)
 {
-       MovePtr<vkt::ycbcr::MultiPlaneImageData>    multiPlaneImageData                             (new vkt::ycbcr::MultiPlaneImageData(format, tcu::UVec2(codedExtent.width, codedExtent.height)));
-       const VkQueue                                   queueDecode                                             = getDeviceQueue(vkd, device, queueFamilyIndexDecode, 0u);
-       const VkQueue                                   queueTransfer                                   = getDeviceQueue(vkd, device, queueFamilyIndexTransfer, 0u);
-       const VkImageSubresourceRange   imageSubresourceRange                   = makeImageSubresourceRange(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
-       const VkImageMemoryBarrier2KHR  imageBarrierDecode                              = makeImageMemoryBarrier2(VK_PIPELINE_STAGE_2_VIDEO_DECODE_BIT_KHR,
-                                                                                                                                                                                         VK_ACCESS_2_VIDEO_DECODE_WRITE_BIT_KHR,
-                                                                                                                                                                                         VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT_KHR,
-                                                                                                                                                                                         VK_ACCESS_NONE_KHR,
-                                                                                                                                                                                         layout,
-                                                                                                                                                                                         VK_IMAGE_LAYOUT_GENERAL,
-                                                                                                                                                                                         image,
-                                                                                                                                                                                         imageSubresourceRange);
-       const VkImageMemoryBarrier2KHR  imageBarrierOwnershipDecode             = makeImageMemoryBarrier2(VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT_KHR,
-                                                                                                                                                                                         VK_ACCESS_NONE_KHR,
-                                                                                                                                                                                         VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT_KHR,
-                                                                                                                                                                                         VK_ACCESS_NONE_KHR,
-                                                                                                                                                                                         VK_IMAGE_LAYOUT_GENERAL,
-                                                                                                                                                                                         VK_IMAGE_LAYOUT_GENERAL,
-                                                                                                                                                                                         image,
-                                                                                                                                                                                         imageSubresourceRange,
-                                                                                                                                                                                         queueFamilyIndexDecode,
-                                                                                                                                                                                         queueFamilyIndexTransfer);
-       const VkImageMemoryBarrier2KHR  imageBarrierOwnershipTransfer   = makeImageMemoryBarrier2(VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT_KHR,
-                                                                                                                                                                                         VK_ACCESS_NONE_KHR,
-                                                                                                                                                                                         VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT_KHR,
-                                                                                                                                                                                         VK_ACCESS_NONE_KHR,
-                                                                                                                                                                                         VK_IMAGE_LAYOUT_GENERAL,
-                                                                                                                                                                                         VK_IMAGE_LAYOUT_GENERAL,
-                                                                                                                                                                                         image,
-                                                                                                                                                                                         imageSubresourceRange,
-                                                                                                                                                                                         queueFamilyIndexDecode,
-                                                                                                                                                                                         queueFamilyIndexTransfer);
-       const VkImageMemoryBarrier2KHR  imageBarrierTransfer                    = makeImageMemoryBarrier2(VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
-                                                                                                                                                                                         VK_ACCESS_2_TRANSFER_READ_BIT_KHR,
-                                                                                                                                                                                         VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT_KHR,
-                                                                                                                                                                                         VK_ACCESS_NONE_KHR,
-                                                                                                                                                                                         VK_IMAGE_LAYOUT_GENERAL,
-                                                                                                                                                                                         VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                                                                                                                                                                                         image,
-                                                                                                                                                                                         imageSubresourceRange);
-       const Move<VkCommandPool>               cmdDecodePool                                   (makeCommandPool(vkd, device, queueFamilyIndexDecode));
-       const Move<VkCommandBuffer>             cmdDecodeBuffer                                 (allocateCommandBuffer(vkd, device, *cmdDecodePool, VK_COMMAND_BUFFER_LEVEL_PRIMARY));
-       const Move<VkCommandPool>               cmdTransferPool                                 (makeCommandPool(vkd, device, queueFamilyIndexTransfer));
-       const Move<VkCommandBuffer>             cmdTransferBuffer                               (allocateCommandBuffer(vkd, device, *cmdTransferPool, VK_COMMAND_BUFFER_LEVEL_PRIMARY));
-       Move<VkSemaphore>                               semaphore                                               = createSemaphore(vkd, device);
-       Move<VkFence>                                   decodeFence                                             = createFence(vkd, device);
-       Move<VkFence>                                   transferFence                                   = createFence(vkd, device);
-       VkFence                                                 fences[]                                                = { *decodeFence, *transferFence };
-       const VkPipelineStageFlags              waitDstStageMask                                = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
-       const VkSubmitInfo                              decodeSubmitInfo
-       {
-               VK_STRUCTURE_TYPE_SUBMIT_INFO,                                          // VkStructureType                              sType;
-               DE_NULL,                                                                                        // const void*                                  pNext;
-               0u,                                                                                                     // deUint32                                             waitSemaphoreCount;
-               DE_NULL,                                                                                        // const VkSemaphore*                   pWaitSemaphores;
-               DE_NULL,                                                                                        // const VkPipelineStageFlags*  pWaitDstStageMask;
-               1u,                                                                                                     // deUint32                                             commandBufferCount;
-               &*cmdDecodeBuffer,                                                                      // const VkCommandBuffer*               pCommandBuffers;
-               1u,                                                                                                     // deUint32                                             signalSemaphoreCount;
-               &*semaphore,                                                                            // const VkSemaphore*                   pSignalSemaphores;
-       };
-       const VkSubmitInfo                              transferSubmitInfo
-       {
-               VK_STRUCTURE_TYPE_SUBMIT_INFO,                                          // VkStructureType                              sType;
-               DE_NULL,                                                                                        // const void*                                  pNext;
-               1u,                                                                                                     // deUint32                                             waitSemaphoreCount;
-               &*semaphore,                                                                            // const VkSemaphore*                   pWaitSemaphores;
-               &waitDstStageMask,                                                                      // const VkPipelineStageFlags*  pWaitDstStageMask;
-               1u,                                                                                                     // deUint32                                             commandBufferCount;
-               &*cmdTransferBuffer,                                                            // const VkCommandBuffer*               pCommandBuffers;
-               0u,                                                                                                     // deUint32                                             signalSemaphoreCount;
-               DE_NULL,                                                                                        // const VkSemaphore*                   pSignalSemaphores;
-       };
+	MovePtr<vkt::ycbcr::MultiPlaneImageData> multiPlaneImageData(new vkt::ycbcr::MultiPlaneImageData(format, tcu::UVec2(codedExtent.width, codedExtent.height)));
+	const VkQueue							 queueDecode				   = getDeviceQueue(vkd, device, queueFamilyIndexDecode, 0u);
+	const VkQueue							 queueTransfer				   = getDeviceQueue(vkd, device, queueFamilyIndexTransfer, 0u);
+	const VkImageSubresourceRange			 imageSubresourceRange		   = makeImageSubresourceRange(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+	const VkImageMemoryBarrier2KHR			 imageBarrierDecode			   = makeImageMemoryBarrier2(VK_PIPELINE_STAGE_2_VIDEO_DECODE_BIT_KHR,
+																				 VK_ACCESS_2_VIDEO_DECODE_WRITE_BIT_KHR,
+																				 VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT_KHR,
+																				 VK_ACCESS_NONE_KHR,
+																				 layout,
+																				 VK_IMAGE_LAYOUT_GENERAL,
+																				 image,
+																				 imageSubresourceRange);
+	const VkImageMemoryBarrier2KHR			 imageBarrierOwnershipDecode   = makeImageMemoryBarrier2(VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT_KHR,
+																						 VK_ACCESS_NONE_KHR,
+																						 VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT_KHR,
+																						 VK_ACCESS_NONE_KHR,
+																						 VK_IMAGE_LAYOUT_GENERAL,
+																						 VK_IMAGE_LAYOUT_GENERAL,
+																						 image,
+																						 imageSubresourceRange,
+																						 queueFamilyIndexDecode,
+																						 queueFamilyIndexTransfer);
+	const VkImageMemoryBarrier2KHR			 imageBarrierOwnershipTransfer = makeImageMemoryBarrier2(VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT_KHR,
+																							 VK_ACCESS_NONE_KHR,
+																							 VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT_KHR,
+																							 VK_ACCESS_NONE_KHR,
+																							 VK_IMAGE_LAYOUT_GENERAL,
+																							 VK_IMAGE_LAYOUT_GENERAL,
+																							 image,
+																							 imageSubresourceRange,
+																							 queueFamilyIndexDecode,
+																							 queueFamilyIndexTransfer);
+	const VkImageMemoryBarrier2KHR			 imageBarrierTransfer		   = makeImageMemoryBarrier2(VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
+																					 VK_ACCESS_2_TRANSFER_READ_BIT_KHR,
+																					 VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT_KHR,
+																					 VK_ACCESS_NONE_KHR,
+																					 VK_IMAGE_LAYOUT_GENERAL,
+																					 VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+																					 image,
+																					 imageSubresourceRange);
+	const Move<VkCommandPool>				 cmdDecodePool(makeCommandPool(vkd, device, queueFamilyIndexDecode));
+	const Move<VkCommandBuffer>				 cmdDecodeBuffer(allocateCommandBuffer(vkd, device, *cmdDecodePool, VK_COMMAND_BUFFER_LEVEL_PRIMARY));
+	const Move<VkCommandPool>				 cmdTransferPool(makeCommandPool(vkd, device, queueFamilyIndexTransfer));
+	const Move<VkCommandBuffer>				 cmdTransferBuffer(allocateCommandBuffer(vkd, device, *cmdTransferPool, VK_COMMAND_BUFFER_LEVEL_PRIMARY));
+	Move<VkSemaphore>						 semaphore		  = createSemaphore(vkd, device);
+	Move<VkFence>							 decodeFence	  = createFence(vkd, device);
+	Move<VkFence>							 transferFence	  = createFence(vkd, device);
+	VkFence									 fences[]		  = {*decodeFence, *transferFence};
+	const VkPipelineStageFlags				 waitDstStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+	VkSubmitInfo							 decodeSubmitInfo{
+		VK_STRUCTURE_TYPE_SUBMIT_INFO, // VkStructureType                              sType;
+		DE_NULL, // const void*                                  pNext;
+		0u, // deUint32                                             waitSemaphoreCount;
+		DE_NULL, // const VkSemaphore*                   pWaitSemaphores;
+		DE_NULL, // const VkPipelineStageFlags*  pWaitDstStageMask;
+		1u, // deUint32                                             commandBufferCount;
+		&*cmdDecodeBuffer, // const VkCommandBuffer*               pCommandBuffers;
+		1u, // deUint32                                             signalSemaphoreCount;
+		&*semaphore, // const VkSemaphore*                   pSignalSemaphores;
+	};
+	if (frameCompleteSem != VkSemaphore())
+	{
+		decodeSubmitInfo.waitSemaphoreCount = 1;
+		decodeSubmitInfo.pWaitSemaphores	= &frameCompleteSem;
+		decodeSubmitInfo.pWaitDstStageMask	= &waitDstStageMask;
+	}
+	const VkSubmitInfo transferSubmitInfo{
+		VK_STRUCTURE_TYPE_SUBMIT_INFO, // VkStructureType                              sType;
+		DE_NULL, // const void*                                  pNext;
+		1u, // deUint32                                             waitSemaphoreCount;
+		&*semaphore, // const VkSemaphore*                   pWaitSemaphores;
+		&waitDstStageMask, // const VkPipelineStageFlags*  pWaitDstStageMask;
+		1u, // deUint32                                             commandBufferCount;
+		&*cmdTransferBuffer, // const VkCommandBuffer*               pCommandBuffers;
+		0u, // deUint32                                             signalSemaphoreCount;
+		DE_NULL, // const VkSemaphore*                   pSignalSemaphores;
+	};
 
-       DEBUGLOG(std::cout << "getDecodedImage: " << image << " " << layout << std::endl);
+	DEBUGLOG(std::cout << "getDecodedImage: " << image << " " << layout << std::endl);
 
-       beginCommandBuffer(vkd, *cmdDecodeBuffer, 0u);
-       cmdPipelineImageMemoryBarrier2(vkd, *cmdDecodeBuffer, &imageBarrierDecode);
-       cmdPipelineImageMemoryBarrier2(vkd, *cmdDecodeBuffer, &imageBarrierOwnershipDecode);
-       endCommandBuffer(vkd, *cmdDecodeBuffer);
+	beginCommandBuffer(vkd, *cmdDecodeBuffer, 0u);
+	cmdPipelineImageMemoryBarrier2(vkd, *cmdDecodeBuffer, &imageBarrierDecode);
+	cmdPipelineImageMemoryBarrier2(vkd, *cmdDecodeBuffer, &imageBarrierOwnershipDecode);
+	endCommandBuffer(vkd, *cmdDecodeBuffer);
 
-       beginCommandBuffer(vkd, *cmdTransferBuffer, 0u);
-       cmdPipelineImageMemoryBarrier2(vkd, *cmdTransferBuffer, &imageBarrierOwnershipTransfer);
-       cmdPipelineImageMemoryBarrier2(vkd, *cmdTransferBuffer, &imageBarrierTransfer);
-       endCommandBuffer(vkd, *cmdTransferBuffer);
+	beginCommandBuffer(vkd, *cmdTransferBuffer, 0u);
+	cmdPipelineImageMemoryBarrier2(vkd, *cmdTransferBuffer, &imageBarrierOwnershipTransfer);
+	cmdPipelineImageMemoryBarrier2(vkd, *cmdTransferBuffer, &imageBarrierTransfer);
+	endCommandBuffer(vkd, *cmdTransferBuffer);
 
-       VK_CHECK(vkd.queueSubmit(queueDecode, 1u, &decodeSubmitInfo, *decodeFence));
-       VK_CHECK(vkd.queueSubmit(queueTransfer, 1u, &transferSubmitInfo, *transferFence));
+	VK_CHECK(vkd.queueSubmit(queueDecode, 1u, &decodeSubmitInfo, *decodeFence));
+	VK_CHECK(vkd.queueSubmit(queueTransfer, 1u, &transferSubmitInfo, *transferFence));
 
-       VK_CHECK(vkd.waitForFences(device, DE_LENGTH_OF_ARRAY(fences), fences, DE_TRUE, ~0ull));
+	VK_CHECK(vkd.waitForFences(device, DE_LENGTH_OF_ARRAY(fences), fences, DE_TRUE, ~0ull));
 
-       vkt::ycbcr::downloadImage(vkd, device, queueFamilyIndexTransfer, allocator, image, multiPlaneImageData.get(), 0, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+	vkt::ycbcr::downloadImage(vkd, device, queueFamilyIndexTransfer, allocator, image, multiPlaneImageData.get(), 0, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 
-       return multiPlaneImageData;
+	const VkImageMemoryBarrier2KHR			 imageBarrierTransfer2		   = makeImageMemoryBarrier2(VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
+																				  VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
+																				  VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT_KHR,
+																				  VK_ACCESS_NONE_KHR,
+																				   VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+																				   VK_IMAGE_LAYOUT_VIDEO_DECODE_DPB_KHR,
+																				  image,
+																				  imageSubresourceRange);
+
+
+	vkd.resetCommandBuffer(*cmdTransferBuffer, 0u);
+	vkd.resetFences(device, 1, &*transferFence);
+	beginCommandBuffer(vkd, *cmdTransferBuffer, 0u);
+	cmdPipelineImageMemoryBarrier2(vkd, *cmdTransferBuffer, &imageBarrierTransfer2);
+	endCommandBuffer(vkd, *cmdTransferBuffer);
+
+	const VkSubmitInfo transferSubmitInfo2{
+		VK_STRUCTURE_TYPE_SUBMIT_INFO, // VkStructureType                              sType;
+		DE_NULL, // const void*                                  pNext;
+		0u, // deUint32                                             waitSemaphoreCount;
+		DE_NULL, // const VkSemaphore*                   pWaitSemaphores;
+		DE_NULL, // const VkPipelineStageFlags*  pWaitDstStageMask;
+		1u, // deUint32                                             commandBufferCount;
+		&*cmdTransferBuffer, // const VkCommandBuffer*               pCommandBuffers;
+		0u, // deUint32                                             signalSemaphoreCount;
+		DE_NULL, // const VkSemaphore*                   pSignalSemaphores;
+	};
+
+	VK_CHECK(vkd.queueSubmit(queueTransfer, 1u, &transferSubmitInfo2, *transferFence));
+	VK_CHECK(vkd.waitForFences(device, 1, &*transferFence, DE_TRUE, ~0ull));
+
+	return multiPlaneImageData;
 }
 
 }	// video

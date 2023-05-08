@@ -473,6 +473,7 @@ tcu::TestStatus VideoDecodeTestInstance::iterate(void)
 												  layout,
 												  format,
 												  imageExtent,
+												  pOutFrame->frameCompleteSemaphore,
 												  m_deviceContext.transferQueueFamilyIdx(),
 												  m_deviceContext.decodeQueueFamilyIdx());
 
