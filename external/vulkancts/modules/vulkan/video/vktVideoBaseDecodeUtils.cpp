@@ -709,7 +709,7 @@ int32_t VideoBaseDecoder::StartVideoSequence (const VkParserDetectedVideoFormat*
 											 imageExtent,
 											m_dpbImageFormat,
 											 maxDpbSlotCount,
-											 std::max<uint32_t>(maxDpbSlotCount, VkParserPerFrameDecodeParameters::MAX_DPB_REF_SLOTS),
+											 std::min<uint32_t>(maxDpbSlotCount, m_videoCaps.maxActiveReferencePictures),
 											 m_videoSession);
 
 		// after creating a new video session, we need codec reset.
