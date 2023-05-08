@@ -1054,9 +1054,16 @@ bool VideoBaseDecoder::DecodePicture (VkParserPictureData* pd,
 	VkVideoReferenceSlotInfoKHR
 			referenceSlots[VkParserPerFrameDecodeParameters::MAX_DPB_REF_AND_SETUP_SLOTS];
 	VkVideoReferenceSlotInfoKHR setupReferenceSlot = {
-			VK_STRUCTURE_TYPE_VIDEO_REFERENCE_SLOT_INFO_KHR, NULL,
+			VK_STRUCTURE_TYPE_VIDEO_REFERENCE_SLOT_INFO_KHR,
+			nullptr,
 			-1, // slotIndex
 			NULL // pPictureResource
+	};
+	VkVideoReferenceSlotInfoKHR setupReferenceSlotActivation = {
+		VK_STRUCTURE_TYPE_VIDEO_REFERENCE_SLOT_INFO_KHR,
+		nullptr,
+		-1,
+		nullptr,
 	};
 
 	pCurrFrameDecParams->decodeFrameInfo.sType = VK_STRUCTURE_TYPE_VIDEO_DECODE_INFO_KHR;
@@ -1130,8 +1137,18 @@ bool VideoBaseDecoder::DecodePicture (VkParserPictureData* pd,
 				h264.stdPictureInfo.flags, &setupReferenceSlot.slotIndex);
 
 		assert(!pd->ref_pic_flag || (setupReferenceSlot.slotIndex >= 0));
+
+		// TODO: Dummy struct to silence validation. The root problem is that the dpb map doesn't take account of the setup slot,
+		// for some reason... So we can't use the existing logic to setup the picture flags and frame number from the dpbEntry
+		// class.
+		VkVideoDecodeH264DpbSlotInfoKHR h264SlotInfo = {};
+		h264SlotInfo.sType = VK_STRUCTURE_TYPE_VIDEO_DECODE_H264_DPB_SLOT_INFO_KHR;
+		StdVideoDecodeH264ReferenceInfo refinfo = {};
+		h264SlotInfo.pStdReferenceInfo = &refinfo;
+
 		if (setupReferenceSlot.slotIndex >= 0) {
 			setupReferenceSlot.pPictureResource = &pCurrFrameDecParams->dpbSetupPictureResource;
+			setupReferenceSlot.pNext = &h264SlotInfo;
 			pCurrFrameDecParams->decodeFrameInfo.pSetupReferenceSlot = &setupReferenceSlot;
 		}
 		if (pCurrFrameDecParams->numGopReferenceSlots) {
@@ -1220,11 +1237,19 @@ bool VideoBaseDecoder::DecodePicture (VkParserPictureData* pd,
 																	 &setupReferenceSlot.slotIndex);
 
 		assert(!pd->ref_pic_flag || (setupReferenceSlot.slotIndex >= 0));
+		// TODO: Dummy struct to silence validation. The root problem is that the dpb map doesn't take account of the setup slot,
+		// for some reason... So we can't use the existing logic to setup the picture flags and frame number from the dpbEntry
+		// class.
+		VkVideoDecodeH265DpbSlotInfoKHR h265SlotInfo = {};
+		h265SlotInfo.sType = VK_STRUCTURE_TYPE_VIDEO_DECODE_H265_DPB_SLOT_INFO_KHR;
+		StdVideoDecodeH265ReferenceInfo refinfo = {};
+		h265SlotInfo.pStdReferenceInfo = &refinfo;
+
 		if (setupReferenceSlot.slotIndex >= 0) {
 			setupReferenceSlot.pPictureResource = &pCurrFrameDecParams->dpbSetupPictureResource;
+			setupReferenceSlot.pNext = &h265SlotInfo;
 			pCurrFrameDecParams->decodeFrameInfo.pSetupReferenceSlot = &setupReferenceSlot;
 		}
-
 		if (pCurrFrameDecParams->numGopReferenceSlots) {
 			assert(pCurrFrameDecParams->numGopReferenceSlots <= (int32_t)VkParserPerFrameDecodeParameters::MAX_DPB_REF_SLOTS);
 			for (uint32_t dpbEntryIdx = 0; dpbEntryIdx < (uint32_t)pCurrFrameDecParams->numGopReferenceSlots;
@@ -1450,6 +1475,24 @@ int32_t VideoBaseDecoder::DecodePictureWithParameters(VkParserPerFrameDecodePara
 
 	decodeBeginInfo.referenceSlotCount = pPicParams->decodeFrameInfo.referenceSlotCount;
 	decodeBeginInfo.pReferenceSlots	   = pPicParams->decodeFrameInfo.pReferenceSlots;
+
+	// Ensure the resource for the resources associated with the
+    // reference slot (if it exists) are in the bound picture
+    // resources set.  See VUID-vkCmdDecodeVideoKHR-pDecodeInfo-07149.
+	std::vector<VkVideoReferenceSlotInfoKHR> fullReferenceSlots;
+	if (pPicParams->decodeFrameInfo.pSetupReferenceSlot != nullptr)
+	{
+		fullReferenceSlots.clear();
+		for (deUint32 i = 0; i < decodeBeginInfo.referenceSlotCount; i++)
+			fullReferenceSlots.push_back(decodeBeginInfo.pReferenceSlots[i]);
+		VkVideoReferenceSlotInfoKHR setupActivationSlot = {};
+		setupActivationSlot.sType = VK_STRUCTURE_TYPE_VIDEO_REFERENCE_SLOT_INFO_KHR;
+		setupActivationSlot.slotIndex = -1;
+		setupActivationSlot.pPictureResource = dpbAndOutputCoincide() ? &pPicParams->decodeFrameInfo.dstPictureResource : &pPicParams->pictureResources[pPicParams->numGopReferenceSlots];
+		fullReferenceSlots.push_back(setupActivationSlot);
+		decodeBeginInfo.referenceSlotCount++;
+		decodeBeginInfo.pReferenceSlots = fullReferenceSlots.data();
+	}
 
 	if (pDecodePictureInfo->flags.unpairedField)
 	{
@@ -1917,20 +1960,38 @@ uint32_t VideoBaseDecoder::FillDpbH264State (const VkParserPictureData *	pd,
 		std::cout << "\tRef frames data in for picIdx: "
 				  << (int32_t)GetPicIdx(pd->pCurrPic) << std::endl
 				  << "\tSlot Index:\t\t";
-		for (uint32_t slot = 0; slot < numUsedRef; slot++) {
-			if (!refOnlyDpbIn[slot].is_non_existing) {
-				std::cout << slot << ",\t";
-			} else {
-				std::cout << 'X' << ",\t";
+		if (numUsedRef == 0)
+			std::cout << "(none)" << std::endl;
+		else
+		{
+			for (uint32_t slot = 0; slot < numUsedRef; slot++)
+			{
+				if (!refOnlyDpbIn[slot].is_non_existing)
+				{
+					std::cout << slot << ",\t";
+				}
+				else
+				{
+					std::cout << 'X' << ",\t";
+				}
 			}
+			std::cout << std::endl;
 		}
-		std::cout << std::endl
-				  << "\tPict Index:\t\t";
-		for (uint32_t slot = 0; slot < numUsedRef; slot++) {
-			if (!refOnlyDpbIn[slot].is_non_existing) {
-				std::cout << refOnlyDpbIn[slot].m_picBuff->m_picIdx << ",\t";
-			} else {
-				std::cout << 'X' << ",\t";
+		std::cout << "\tPict Index:\t\t";
+		if (numUsedRef == 0)
+			std::cout << "(none)" << std::endl;
+		else
+		{
+			for (uint32_t slot = 0; slot < numUsedRef; slot++)
+			{
+				if (!refOnlyDpbIn[slot].is_non_existing)
+				{
+					std::cout << refOnlyDpbIn[slot].m_picBuff->m_picIdx << ",\t";
+				}
+				else
+				{
+					std::cout << 'X' << ",\t";
+				}
 			}
 		}
 		std::cout << "\n\tTotal Ref frames for picIdx: "
@@ -2049,10 +2110,10 @@ uint32_t VideoBaseDecoder::FillDpbH264State (const VkParserPictureData *	pd,
 	if (videoLoggingEnabled()) {
 		uint32_t slotInUseMask = m_dpb.getSlotInUseMask();
 		uint32_t slotsInUseCount = 0;
-		std::cout << "\tAllocated Ref slot " << (int32_t)currPicDpbSlot << " for "
+		std::cout << "\tAllocated DPB slot " << (int32_t)currPicDpbSlot << " for "
 				  << (pd->ref_pic_flag ? "REFERENCE" : "NON-REFERENCE")
 				  << " picIdx: " << (int32_t)currPicIdx << std::endl;
-		std::cout << "\tRef frames map for picIdx: " << (int32_t)currPicIdx
+		std::cout << "\tDPB frames map for picIdx: " << (int32_t)currPicIdx
 				  << std::endl
 				  << "\tSlot Index:\t\t";
 		for (uint32_t slot = 0; slot < m_dpb.getMaxSize(); slot++) {
