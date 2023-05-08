@@ -173,6 +173,15 @@ struct TestDefinition
 														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
 														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
 														 STD_VIDEO_H264_PROFILE_IDC_HIGH)),
+					   TestDefinition(TEST_TYPE_H264_DECODE_I_P,
+									  "vulkan/video/clip-a.h264",
+									  2 * 1024 * 1024,
+									  2,
+									  VkVideoCoreProfile(VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR,
+														 VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
+														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+														 STD_VIDEO_H264_PROFILE_IDC_HIGH)),
 					   TestDefinition(TEST_TYPE_H264_DECODE_I_P_B_13,
 									  "vulkan/video/jellyfish-250-mbps-4k-uhd-GOB-IPB13.h264",
 									  4 * 1024 * 1024,
@@ -186,6 +195,15 @@ struct TestDefinition
 									  "vulkan/video/clip-d.h265",
 									  8 * 1024,
 									  1,
+									  VkVideoCoreProfile(VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR,
+														 VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
+														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+														 STD_VIDEO_H265_PROFILE_IDC_MAIN)),
+					   TestDefinition(TEST_TYPE_H265_DECODE_I_P,
+									  "vulkan/video/clip-d.h265",
+									  8 * 1024,
+									  2,
 									  VkVideoCoreProfile(VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR,
 														 VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
 														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
@@ -469,6 +487,10 @@ tcu::TestStatus VideoDecodeTestInstance::iterate(void)
 				incorrectFrames.push_back(frameNumber);
 			}
 			frameNumber++;
+			if (frameNumber == m_testDefinition.framesToCheck) {
+				framesRemaining = 0;
+				videoStreamHasEnded = true;
+			}
 		}
 	}
 	while (framesRemaining > 0 || !videoStreamHasEnded);
