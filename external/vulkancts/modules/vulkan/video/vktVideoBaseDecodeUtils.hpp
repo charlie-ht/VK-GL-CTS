@@ -890,6 +890,7 @@ public:
 	virtual ~VulkanVideoFrameBuffer() { }
 
 	static VkResult Create(DeviceContext* devCtx,
+						   bool supportsQueries,
 						   VkSharedBaseObj<VulkanVideoFrameBuffer>& vkVideoFrameBuffer);
 };
 
@@ -906,10 +907,14 @@ class VideoBaseDecoder final : public VkParserVideoDecodeClient
 	};
 
 public:
-	VideoBaseDecoder(DeviceContext*							  context,
-					 const VkVideoCoreProfile&				  profile,
-					 size_t									  framesToCheck,
-					 VkSharedBaseObj<VulkanVideoFrameBuffer>& videoFrameBuffer);
+	struct Parameters {
+		DeviceContext* context{};
+		const VkVideoCoreProfile* profile{};
+		size_t framesToCheck{};
+		bool queryDecodeStatus{};
+		VkSharedBaseObj<VulkanVideoFrameBuffer> framebuffer;
+	};
+	VideoBaseDecoder(Parameters&& params);
 	~VideoBaseDecoder()
 	{
 		Deinitialize();

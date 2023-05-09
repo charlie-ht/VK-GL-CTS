@@ -123,29 +123,31 @@ struct TestDefinition
 	// Once the frame with this number is processed, the test stops.
 	size_t			   framesToCheck;
 
-	VkVideoCoreProfile profile;
 	// TODO: Video profile & level
+	VkVideoCoreProfile profile;
+
+	// Whether to perform video status queries during coding operations.
+	bool			   queryDecodeStatus{false};
 
 	TestDefinition(TestType				type,
 				   const char*			filename,
 				   size_t				filesize,
 				   size_t				numFrames,
-				   VkVideoCoreProfile&& coreProfile)
+				   VkVideoCoreProfile&& coreProfile,
+				   bool					queryDecodeStatus = false)
 		: testType(type)
 		, videoClipFilename(filename)
 		, videoClipSizeInBytes(filesize)
 		, framesToCheck(numFrames)
 		, profile(coreProfile)
+		, queryDecodeStatus(queryDecodeStatus)
 	{
 	}
-
-	// Whether to perform video status queries during coding operations.
-	bool						  queryResultWithStatus{false};
 
 	VideoDevice::VideoDeviceFlags requiredDeviceFlags() const
 	{
 		return VideoDevice::VIDEO_DEVICE_FLAG_REQUIRE_SYNC2_OR_NOT_SUPPORTED |
-			   (queryResultWithStatus ? VideoDevice::VIDEO_DEVICE_FLAG_QUERY_WITH_STATUS_FOR_DECODE_SUPPORT : 0);
+			   (queryDecodeStatus ? VideoDevice::VIDEO_DEVICE_FLAG_QUERY_WITH_STATUS_FOR_DECODE_SUPPORT : 0u);
 	}
 
 	const VkExtensionProperties* extensionProperties() const
@@ -186,6 +188,16 @@ struct TestDefinition
 														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
 														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
 														 STD_VIDEO_H264_PROFILE_IDC_HIGH)),
+					   TestDefinition(TEST_TYPE_H264_DECODE_QUERY_RESULT_WITH_STATUS,
+									  "vulkan/video/clip-a.h264",
+									  2 * 1024 * 1024,
+									  30,
+									  VkVideoCoreProfile(VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR,
+														 VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
+														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+														 STD_VIDEO_H264_PROFILE_IDC_HIGH),
+									  true),
 					   TestDefinition(TEST_TYPE_H264_DECODE_I_P,
 									  "vulkan/video/clip-a.h264",
 									  2 * 1024 * 1024,
@@ -279,10 +291,16 @@ VideoDecodeTestInstance::VideoDecodeTestInstance(Context& context, const TestDef
 		getDeviceQueue(m_context.getDeviceInterface(), device, m_videoDevice.getQueueFamilyIndexDecode(), 0);
 
 	VkSharedBaseObj<VulkanVideoFrameBuffer> vkVideoFrameBuffer;
-	VK_CHECK(VulkanVideoFrameBuffer::Create(&m_deviceContext, vkVideoFrameBuffer));
+	VK_CHECK(VulkanVideoFrameBuffer::Create(&m_deviceContext, m_testDefinition.queryDecodeStatus, vkVideoFrameBuffer));
 
-	m_decoder = de::newMovePtr<VideoBaseDecoder>(
-		&m_deviceContext, m_testDefinition.profile, m_testDefinition.framesToCheck, vkVideoFrameBuffer);
+	VideoBaseDecoder::Parameters params;
+	params.profile = &m_testDefinition.profile;
+	params.context = &m_deviceContext;
+	params.framebuffer = vkVideoFrameBuffer;
+	params.framesToCheck = m_testDefinition.framesToCheck;
+	params.queryDecodeStatus = m_testDefinition.queryDecodeStatus;
+
+	m_decoder = MovePtr<VideoBaseDecoder>(new VideoBaseDecoder(std::move(params)));
 }
 
 static void createParser(TestDefinition& params, VkParserVideoDecodeClient* decoderClient, VkSharedBaseObj<VulkanVideoDecodeParser>& parser)

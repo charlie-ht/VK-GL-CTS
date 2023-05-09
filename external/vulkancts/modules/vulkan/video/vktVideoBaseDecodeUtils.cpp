@@ -582,18 +582,18 @@ uint32_t VideoBaseDecoder::ResetPicDpbSlots(uint32_t picIndexSlotValidMask)
 	return m_dpbSlotsMask;
 }
 
-VideoBaseDecoder::VideoBaseDecoder (DeviceContext* context, const VkVideoCoreProfile &profile, size_t framesToCheck, VkSharedBaseObj<VulkanVideoFrameBuffer>& videoFrameBuffer)
-	: m_deviceContext							(context)
-	, m_profile									(profile)
+VideoBaseDecoder::VideoBaseDecoder (Parameters&& params)
+	: m_deviceContext							(params.context)
+	, m_profile									(*params.profile)
 	, m_dpb										(3)
-	, m_numFramesToCheck (framesToCheck)
-	, m_videoFrameBuffer						(videoFrameBuffer)
-	, m_decodeFramesData						(context->getDeviceDriver(), context->device, context->decodeQueueFamilyIdx())
-	, m_queryResultWithStatus					(false)
+	, m_videoFrameBuffer						(params.framebuffer)
+	// TODO: interface cleanup
+	, m_decodeFramesData						(params.context->getDeviceDriver(), params.context->device, params.context->decodeQueueFamilyIdx())
+	, m_queryResultWithStatus					(params.queryDecodeStatus)
 {
 	std::fill(m_pictureToDpbSlotMap.begin(), m_pictureToDpbSlotMap.end(), -1);
 
-	util::getVideoDecodeCapabilities(*m_deviceContext, profile, m_videoCaps, m_decodeCaps);
+	VK_CHECK(util::getVideoDecodeCapabilities(*m_deviceContext, *params.profile, m_videoCaps, m_decodeCaps));
 
 	VK_CHECK(util::getSupportedVideoFormats(*m_deviceContext, m_profile, m_decodeCaps.flags,
 											 m_outImageFormat,
@@ -1715,8 +1715,7 @@ int32_t VideoBaseDecoder::DecodePictureWithParameters(VkParserPerFrameDecodePara
 	//		assert(result == VK_SUCCESS);
 	//	}
 
-	const bool checkDecodeStatus = true; // Check the queries
-	if (checkDecodeStatus && m_queryResultWithStatus)
+	if (m_queryResultWithStatus)
 	{
 		VkQueryResultStatusKHR decodeStatus;
 		result = vk.getQueryPoolResults(device,
@@ -1727,16 +1726,15 @@ int32_t VideoBaseDecoder::DecodePictureWithParameters(VkParserPerFrameDecodePara
 										&decodeStatus,
 										sizeof(decodeStatus),
 										VK_QUERY_RESULT_WITH_STATUS_BIT_KHR | VK_QUERY_RESULT_WAIT_BIT);
-
-		assert(result == VK_SUCCESS);
-		assert(decodeStatus == VK_QUERY_RESULT_STATUS_COMPLETE_KHR);
-
-		if (videoLoggingEnabled())
+		if (true || videoLoggingEnabled())
 		{
 			std::cout << "\t +++++++++++++++++++++++++++< " << currPicIdx << " >++++++++++++++++++++++++++++++" << std::endl;
 			std::cout << "\t => Decode Status for CurrPicIdx: " << currPicIdx << std::endl
 					  << "\t\tdecodeStatus: " << decodeStatus << std::endl;
 		}
+
+		TCU_CHECK_AND_THROW(TestError, result == VK_SUCCESS || result == VK_ERROR_DEVICE_LOST, "Driver has returned an invalid query result");
+		TCU_CHECK_AND_THROW(TestError, decodeStatus != VK_QUERY_RESULT_STATUS_ERROR_KHR, "Decode query returned an unexpected error");
 	}
 
 	return currPicIdx;
@@ -2961,12 +2959,13 @@ class VkVideoFrameBuffer : public VulkanVideoFrameBuffer {
 public:
 	static constexpr size_t maxFramebufferImages = 32;
 
-	VkVideoFrameBuffer(DeviceContext& vkDevCtx)
+	VkVideoFrameBuffer(DeviceContext& vkDevCtx, bool supportsQueries)
 			: m_vkDevCtx(vkDevCtx),
 			m_refCount(0),
 			m_displayQueueMutex(),
 			m_perFrameDecodeImageSet(),
 			m_displayFrames(),
+			m_supportsQueries(supportsQueries),
 			m_queryPool(),
 			m_ownedByDisplayMask(0),
 			m_frameNumInDecodeOrder(0),
@@ -2992,7 +2991,7 @@ public:
 			queryPoolCreateInfo.queryType = VK_QUERY_TYPE_RESULT_STATUS_ONLY_KHR;
 			queryPoolCreateInfo.queryCount = numSlots;  // m_numDecodeSurfaces frames worth
 
-			// return vk.createQueryPool(vkDevCtx.device, &queryPoolCreateInfo, NULL, &m_queryPool);
+			return vk.createQueryPool(vkDevCtx.device, &queryPoolCreateInfo, NULL, &m_queryPool);
 		}
 
 		return VK_SUCCESS;
@@ -3032,10 +3031,8 @@ public:
 
 		assert(numImages && (numImages <= maxFramebufferImages) && pDecodeProfile);
 
-		VkResult result = CreateVideoQueries(numImages, m_vkDevCtx, pDecodeProfile);
-		if (result != VK_SUCCESS) {
-			return 0;
-		}
+		if (m_supportsQueries)
+			VK_CHECK(CreateVideoQueries(numImages, m_vkDevCtx, pDecodeProfile));
 
 		// m_extent is for the codedExtent, not the max image resolution
 		m_codedExtent = codedExtent;
@@ -3055,7 +3052,8 @@ public:
 	void Deinitialize() {
 		FlushDisplayQueue();
 
-		DestroyVideoQueries();
+		if (m_supportsQueries)
+			DestroyVideoQueries();
 
 		m_ownedByDisplayMask = 0;
 		m_frameNumInDecodeOrder = 0;
@@ -3359,6 +3357,7 @@ private:
 	std::mutex m_displayQueueMutex;
 	NvPerFrameDecodeImageSet m_perFrameDecodeImageSet;
 	std::queue<uint8_t> m_displayFrames;
+	bool m_supportsQueries;
 	VkQueryPool m_queryPool;
 	uint32_t m_ownedByDisplayMask;
 	int32_t m_frameNumInDecodeOrder;
@@ -3368,9 +3367,10 @@ private:
 };
 
 VkResult VulkanVideoFrameBuffer::Create(DeviceContext* vkDevCtx,
+										bool supportsQueries,
 										VkSharedBaseObj<VulkanVideoFrameBuffer>& vkVideoFrameBuffer)
 {
-	VkSharedBaseObj<VkVideoFrameBuffer> videoFrameBuffer(new VkVideoFrameBuffer(*vkDevCtx));
+	VkSharedBaseObj<VkVideoFrameBuffer> videoFrameBuffer(new VkVideoFrameBuffer(*vkDevCtx, supportsQueries));
 	if (videoFrameBuffer) {
 		vkVideoFrameBuffer = videoFrameBuffer;
 		return VK_SUCCESS;
