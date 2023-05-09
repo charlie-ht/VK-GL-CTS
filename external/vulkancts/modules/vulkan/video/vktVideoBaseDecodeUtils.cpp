@@ -606,12 +606,12 @@ VideoBaseDecoder::VideoBaseDecoder (Parameters&& params)
 	DE_ASSERT(m_supportedVideoCodecs != VK_VIDEO_CODEC_OPERATION_NONE_KHR);
 }
 
-void VideoBaseDecoder::Deinitialize ()
+void VideoBaseDecoder::Deinitialize()
 {
-	const DeviceInterface&	vkd					= m_deviceContext->getDeviceDriver();
-	const VkDevice			device				= m_deviceContext->device;
-	const VkQueue			queueDecode			= m_deviceContext->decodeQueue;
-	const VkQueue			queueTransfer		= m_deviceContext->transferQueue;
+	const DeviceInterface& vkd			 = m_deviceContext->getDeviceDriver();
+	VkDevice			   device		 = m_deviceContext->device;
+	VkQueue				   queueDecode	 = m_deviceContext->decodeQueue;
+	VkQueue				   queueTransfer = m_deviceContext->transferQueue;
 
 	if (queueDecode)
 		vkd.queueWaitIdle(queueDecode);
@@ -693,24 +693,25 @@ int32_t VideoBaseDecoder::StartVideoSequence (const VkParserDetectedVideoFormat*
 	imageExtent.height = deAlign32(imageExtent.height,  m_videoCaps.pictureAccessGranularity.height);
 
 	if (!m_videoSession ||
-		!m_videoSession->IsCompatible( m_deviceContext->device,
-									   m_deviceContext->decodeQueueFamilyIdx(),
-									   &videoProfile,
-									   m_outImageFormat,
-									   imageExtent,
-									   m_dpbImageFormat,
-									   maxDpbSlotCount,
-									   std::max<uint32_t>(maxDpbSlotCount, VkParserPerFrameDecodeParameters::MAX_DPB_REF_SLOTS)) ) {
+		!m_videoSession->IsCompatible(m_deviceContext->device,
+									  m_deviceContext->decodeQueueFamilyIdx(),
+									  &videoProfile,
+									  m_outImageFormat,
+									  imageExtent,
+									  m_dpbImageFormat,
+									  maxDpbSlotCount,
+									  std::max<uint32_t>(maxDpbSlotCount, VkParserPerFrameDecodeParameters::MAX_DPB_REF_SLOTS)))
+	{
 
-		result = VulkanVideoSession::Create( *m_deviceContext,
-											 m_deviceContext->decodeQueueFamilyIdx(),
-											 &videoProfile,
+		VK_CHECK(VulkanVideoSession::Create(*m_deviceContext,
+											m_deviceContext->decodeQueueFamilyIdx(),
+											&videoProfile,
 											m_outImageFormat,
-											 imageExtent,
+											imageExtent,
 											m_dpbImageFormat,
-											 maxDpbSlotCount,
-											 std::min<uint32_t>(maxDpbSlotCount, m_videoCaps.maxActiveReferencePictures),
-											 m_videoSession);
+											maxDpbSlotCount,
+											std::min<uint32_t>(maxDpbSlotCount, m_videoCaps.maxActiveReferencePictures),
+											m_videoSession));
 
 		// after creating a new video session, we need codec reset.
 		m_resetDecoder = true;
@@ -1058,12 +1059,6 @@ bool VideoBaseDecoder::DecodePicture (VkParserPictureData* pd,
 			nullptr,
 			-1, // slotIndex
 			NULL // pPictureResource
-	};
-	VkVideoReferenceSlotInfoKHR setupReferenceSlotActivation = {
-		VK_STRUCTURE_TYPE_VIDEO_REFERENCE_SLOT_INFO_KHR,
-		nullptr,
-		-1,
-		nullptr,
 	};
 
 	pCurrFrameDecParams->decodeFrameInfo.sType = VK_STRUCTURE_TYPE_VIDEO_DECODE_INFO_KHR;
