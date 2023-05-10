@@ -732,6 +732,7 @@ struct nvVideoDecodeH265DpbSlotInfo {
 
 using VulkanBitstreamBufferPool = VulkanVideoRefCountedPool<VulkanBitstreamBufferImpl, 64>;
 
+// A pool of bitstream buffers and a collection of command buffers for all frames in the decode sequence.
 class NvVkDecodeFrameData {
 public:
 	NvVkDecodeFrameData(const DeviceInterface& vkd, VkDevice device, uint32_t decodeQueueIdx)
@@ -807,6 +808,29 @@ private:
 	VkCommandPool                                             m_videoCommandPool;
 	std::vector<VkCommandBuffer>                              m_commandBuffers;
 	VulkanBitstreamBufferPool                                 m_bitstreamBuffersQueue;
+};
+
+struct nvVideoH264PicParameters {
+	enum { MAX_REF_PICTURES_LIST_ENTRIES = 16 };
+
+	StdVideoDecodeH264PictureInfo stdPictureInfo;
+	VkVideoDecodeH264PictureInfoKHR pictureInfo;
+	VkVideoDecodeH264SessionParametersAddInfoKHR pictureParameters;
+	nvVideoDecodeH264DpbSlotInfo currentDpbSlotInfo;
+	nvVideoDecodeH264DpbSlotInfo dpbRefList[MAX_REF_PICTURES_LIST_ENTRIES];
+};
+
+/*******************************************************/
+//! \struct nvVideoH265PicParameters
+//! HEVC picture parameters
+/*******************************************************/
+struct nvVideoH265PicParameters {
+	enum { MAX_REF_PICTURES_LIST_ENTRIES = 16 };
+
+	StdVideoDecodeH265PictureInfo stdPictureInfo;
+	VkVideoDecodeH265PictureInfoKHR pictureInfo;
+	VkVideoDecodeH265SessionParametersAddInfoKHR pictureParameters;
+	nvVideoDecodeH265DpbSlotInfo dpbRefList[MAX_REF_PICTURES_LIST_ENTRIES];
 };
 
 class VulkanVideoFrameBuffer : public IVulkanVideoFrameBufferParserCb {
@@ -907,11 +931,53 @@ class VideoBaseDecoder final : public VkParserVideoDecodeClient
 	};
 
 public:
+
+	struct CachedDecodeParameters
+	{
+		VkParserPictureData pd;
+		VkParserDecodePictureInfo decodedPictureInfo;
+		VkParserPerFrameDecodeParameters pictureParams;
+		VkVideoReferenceSlotInfoKHR	referenceSlots[VkParserPerFrameDecodeParameters::MAX_DPB_REF_AND_SETUP_SLOTS];
+		VkVideoReferenceSlotInfoKHR setupReferenceSlot;
+
+		VkVideoDecodeH264DpbSlotInfoKHR h264SlotInfo{};
+		StdVideoDecodeH264ReferenceInfo h264RefInfo{};
+		VkVideoDecodeH265DpbSlotInfoKHR h265SlotInfo{};
+		StdVideoDecodeH265ReferenceInfo h265RefInfo{};
+
+		nvVideoH264PicParameters h264PicParams;
+		nvVideoH265PicParameters h265PicParams;
+		NvVkDecodeFrameDataSlot frameDataSlot;
+		VkVideoBeginCodingInfoKHR decodeBeginInfo{};
+		VkBufferMemoryBarrier2KHR bitstreamBufferMemoryBarrier;
+		std::vector<VkImageMemoryBarrier2KHR> imageBarriers;
+		VulkanVideoFrameBuffer::PictureResourceInfo currentDpbPictureResourceInfo;
+		VulkanVideoFrameBuffer::PictureResourceInfo currentOutputPictureResourceInfo;
+		VkVideoPictureResourceInfoKHR currentOutputPictureResource;
+		VkVideoPictureResourceInfoKHR*				 pOutputPictureResource{};
+		VulkanVideoFrameBuffer::PictureResourceInfo* pOutputPictureResourceInfo{};
+		VulkanVideoFrameBuffer::PictureResourceInfo pictureResourcesInfo[VkParserPerFrameDecodeParameters::MAX_DPB_REF_AND_SETUP_SLOTS];
+
+		std::vector<VkVideoReferenceSlotInfoKHR> fullReferenceSlots;
+		int32_t picNumInDecodeOrder;
+		VulkanVideoFrameBuffer::FrameSynchronizationInfo frameSynchronizationInfo;
+
+		~CachedDecodeParameters()
+		{
+			if (pd.sideDataLen > 0)
+			{
+				DE_ASSERT(pd.pSideData);
+				delete[] pd.pSideData;
+			}
+		}
+	};
+
 	struct Parameters {
 		DeviceContext* context{};
 		const VkVideoCoreProfile* profile{};
 		size_t framesToCheck{};
 		bool queryDecodeStatus{};
+		bool outOfOrderDecoding{};
 		VkSharedBaseObj<VulkanVideoFrameBuffer> framebuffer;
 	};
 	VideoBaseDecoder(Parameters&& params);
@@ -927,7 +993,6 @@ public:
 	}
 	const VkVideoCapabilitiesKHR* getVideoCaps() const { return &m_videoCaps; }
 
-private:
 	// VkParserVideoDecodeClient callbacks
 	// Returns max number of reference frames (always at least 2 for MPEG-2)
 	int32_t			BeginSequence(const VkParserSequenceInfo* pnvsi) override;
@@ -977,8 +1042,14 @@ private:
 
 	// Client callbacks
 	virtual int32_t StartVideoSequence(const VkParserDetectedVideoFormat* pVideoFormat);
-	virtual int32_t DecodePictureWithParameters(VkParserPerFrameDecodeParameters* pPicParams,
-												VkParserDecodePictureInfo*		  pDecodePictureInfo);
+	virtual int32_t DecodePictureWithParameters(de::MovePtr<CachedDecodeParameters>& params);
+
+	void ApplyPictureParameters(de::MovePtr<CachedDecodeParameters>& cachedParameters);
+	void WaitForFrameFences(de::MovePtr<CachedDecodeParameters>& cachedParameters);
+	void RecordCommandBuffer(de::MovePtr<CachedDecodeParameters>& cachedParameters);
+	void SubmitQueue(de::MovePtr<CachedDecodeParameters>& cachedParameters);
+	void QueryDecodeResults(de::MovePtr<CachedDecodeParameters>& cachedParameters);
+	void DecodeCachedPictures();
 
 	VkDeviceSize	GetBitstreamBuffer(VkDeviceSize							   size,
 									   VkDeviceSize							   minBitstreamBufferOffsetAlignment,
@@ -1024,11 +1095,16 @@ private:
 	VkSharedBaseObj<VulkanVideoFrameBuffer>						m_videoFrameBuffer{};
 	NvVkDecodeFrameData											m_decodeFramesData;
 	uint32_t													m_maxDecodeFramesCount{};
+
+	// This is only used by the frame buffer, to set picture number in decode order.
+	// The framebuffer should manage this state ideally.
 	int32_t														m_decodePicCount{};
+
 	VkParserDetectedVideoFormat									m_videoFormat{};
 	VkSharedBaseObj<VkParserVideoPictureParameters>				m_currentPictureParameters{};
 	bool														m_queryResultWithStatus{false};
 
+	bool m_outOfOrderDecoding{false};
 	vector<VkParserPerFrameDecodeParameters*>					m_pPerFrameDecodeParameters;
 	vector<VkParserDecodePictureInfo*>							m_pVulkanParserDecodePictureInfo;
 	vector<NvVkDecodeFrameData*>								m_pFrameDatas;
@@ -1045,6 +1121,9 @@ private:
 	vector<VkFence>												m_frameConsumerDoneFences;
 	vector<VkSemaphoreSubmitInfoKHR>							m_frameCompleteSemaphoreSubmitInfos;
 	vector<VkSemaphoreSubmitInfoKHR>							m_frameConsumerDoneSemaphoreSubmitInfos;
+
+	std::vector<de::MovePtr<CachedDecodeParameters>>			m_cachedDecodeParams;
+
 	VkParserSequenceInfo										m_nvsi{};
 	uint32_t													m_maxStreamBufferSize{};
 	uint32_t													m_numBitstreamBuffersToPreallocate{8}; // TODO: Review

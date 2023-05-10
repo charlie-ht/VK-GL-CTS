@@ -129,25 +129,29 @@ struct TestDefinition
 	// Whether to perform video status queries during coding operations.
 	bool			   queryDecodeStatus{false};
 
+	bool outOfOrderDecoding{false};
+
 	TestDefinition(TestType				type,
 				   const char*			filename,
 				   size_t				filesize,
 				   size_t				numFrames,
 				   VkVideoCoreProfile&& coreProfile,
-				   bool					queryDecodeStatus = false)
+				   bool					useQueries = false,
+				   bool					outOfOrder = false)
 		: testType(type)
 		, videoClipFilename(filename)
 		, videoClipSizeInBytes(filesize)
 		, framesToCheck(numFrames)
 		, profile(coreProfile)
-		, queryDecodeStatus(queryDecodeStatus)
+		, queryDecodeStatus(useQueries)
+		, outOfOrderDecoding(outOfOrder)
 	{
 	}
 
 	VideoDevice::VideoDeviceFlags requiredDeviceFlags() const
 	{
 		return VideoDevice::VIDEO_DEVICE_FLAG_REQUIRE_SYNC2_OR_NOT_SUPPORTED |
-			   (queryDecodeStatus ? VideoDevice::VIDEO_DEVICE_FLAG_QUERY_WITH_STATUS_FOR_DECODE_SUPPORT : 0u);
+			   (queryDecodeStatus ? VideoDevice::VIDEO_DEVICE_FLAG_QUERY_WITH_STATUS_FOR_DECODE_SUPPORT : VideoDevice::VIDEO_DEVICE_FLAG_NONE);
 	}
 
 	const VkExtensionProperties* extensionProperties() const
@@ -207,6 +211,17 @@ struct TestDefinition
 														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
 														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
 														 STD_VIDEO_H264_PROFILE_IDC_HIGH)),
+					   TestDefinition(TEST_TYPE_H264_DECODE_I_P_NOT_MATCHING_ORDER,
+									  "vulkan/video/clip-a.h264",
+									  2 * 1024 * 1024,
+									  2,
+									  VkVideoCoreProfile(VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR,
+														 VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
+														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+														 STD_VIDEO_H264_PROFILE_IDC_HIGH),
+									  false,
+									  true),
 					   TestDefinition(TEST_TYPE_H264_DECODE_I_P_B_13,
 									  "vulkan/video/jellyfish-250-mbps-4k-uhd-GOB-IPB13.h264",
 									  4 * 1024 * 1024,
@@ -299,6 +314,7 @@ VideoDecodeTestInstance::VideoDecodeTestInstance(Context& context, const TestDef
 	params.framebuffer = vkVideoFrameBuffer;
 	params.framesToCheck = m_testDefinition.framesToCheck;
 	params.queryDecodeStatus = m_testDefinition.queryDecodeStatus;
+	params.outOfOrderDecoding = m_testDefinition.outOfOrderDecoding;
 
 	m_decoder = MovePtr<VideoBaseDecoder>(new VideoBaseDecoder(std::move(params)));
 }
@@ -496,6 +512,24 @@ tcu::TestStatus VideoDecodeTestInstance::iterate(void)
 	std::vector<int> incorrectFrames;
 	std::vector<int> correctFrames;
 
+	if (m_testDefinition.outOfOrderDecoding)
+	{
+		// This loop is for the out-of-order submissions cases. First all the frame information is gathered from the parser<->decoder loop
+		// then the command buffers are recorded in a random order, as well as the queue submissions, depending on the configuration of
+		// the test.
+		// NOTE: For this sequence to work, the frame buffer must have enough decode surfaces for the GOP intended for decode, otherwise
+		// picture allocation will fail pretty quickly! See m_numDecodeSurfaces. m_maxDecodeFramesCount
+		do
+		{
+			videoStreamHasEnded = processNextChunk();
+			int decodedFrames	= m_decoder->GetVideoFrameBuffer()->GetDisplayedFrameCount();
+			if (decodedFrames == m_testDefinition.framesToCheck)
+			break;
+		}
+		while (!videoStreamHasEnded);
+		DE_ASSERT(m_decoder->m_cachedDecodeParams.size() == m_testDefinition.framesToCheck);
+		m_decoder->DecodeCachedPictures();
+	}
 	do
 	{
 		const DecodedFrame* pOutFrame = nullptr;
