@@ -1495,7 +1495,6 @@ int32_t VideoBaseDecoder::DecodePictureWithParameters(MovePtr<CachedDecodeParame
 	DE_ASSERT(currPicIdx == m_videoFrameBuffer->QueuePictureForDecode(currPicIdx, &cachedParameters->decodedPictureInfo, &referencedObjectsInfo,
 																	  &cachedParameters->frameSynchronizationInfo));
 
-	tcu::print("%s\n", m_outOfOrderDecoding ? "true" : "false");
 	if (m_outOfOrderDecoding)
 		return currPicIdx;
 
@@ -1728,7 +1727,7 @@ void VideoBaseDecoder::QueryDecodeResults(de::MovePtr<CachedDecodeParameters> &c
 											 &decodeStatus,
 											 sizeof(decodeStatus),
 											 VK_QUERY_RESULT_WITH_STATUS_BIT_KHR | VK_QUERY_RESULT_WAIT_BIT);
-	if (true || videoLoggingEnabled())
+	if (videoLoggingEnabled())
 	{
 		std::cout << "\t +++++++++++++++++++++++++++< " << cachedParameters->pictureParams.currPicIdx << " >++++++++++++++++++++++++++++++" << std::endl;
 		std::cout << "\t => Decode Status for CurrPicIdx: " << cachedParameters->pictureParams.currPicIdx << std::endl
