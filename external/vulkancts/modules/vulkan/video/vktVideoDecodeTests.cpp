@@ -550,7 +550,7 @@ tcu::TestStatus VideoDecodeTestInstance::iterate(void)
 			const VkExtent2D	imageExtent{(deUint32)pOutFrame->displayWidth, (deUint32)pOutFrame->displayHeight};
 			const VkImage		image		= pOutFrame->outputImageView->GetImageResource()->GetImage();
 			const VkFormat		format		= pOutFrame->outputImageView->GetImageResource()->GetImageCreateInfo().format;
-			const VkImageLayout layout		= VK_IMAGE_LAYOUT_VIDEO_DECODE_DPB_KHR;
+			const VkImageLayout layout		= m_decoder->dpbAndOutputCoincide() ? VK_IMAGE_LAYOUT_VIDEO_DECODE_DPB_KHR : VK_IMAGE_LAYOUT_VIDEO_DECODE_DST_KHR;
 			auto				resultImage = getDecodedImage(m_deviceContext.getDeviceDriver(),
 												  m_deviceContext.device,
 												  m_deviceContext.allocator(),

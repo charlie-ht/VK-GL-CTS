@@ -1469,10 +1469,8 @@ int32_t VideoBaseDecoder::DecodePictureWithParameters(MovePtr<CachedDecodeParame
 		VkVideoReferenceSlotInfoKHR setupActivationSlot = {};
 		setupActivationSlot.sType = VK_STRUCTURE_TYPE_VIDEO_REFERENCE_SLOT_INFO_KHR;
 		setupActivationSlot.slotIndex = -1;
-
 		setupActivationSlot.pPictureResource = dpbAndOutputCoincide() ? &pPicParams->decodeFrameInfo.dstPictureResource : &pPicParams->pictureResources[pPicParams->numGopReferenceSlots];
-		fullReferenceSlots.push_back(setupActivationSlot);
-
+		cachedParameters->fullReferenceSlots.push_back(setupActivationSlot);
 		decodeBeginInfo.referenceSlotCount++;
 		decodeBeginInfo.pReferenceSlots = cachedParameters->fullReferenceSlots.data();
 	}
@@ -4444,7 +4442,7 @@ MovePtr<vkt::ycbcr::MultiPlaneImageData> getDecodedImage(const DeviceInterface& 
 																				  VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT_KHR,
 																				  VK_ACCESS_NONE_KHR,
 																				   VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-																				   VK_IMAGE_LAYOUT_VIDEO_DECODE_DPB_KHR,
+																				   layout,
 																				  image,
 																				  imageSubresourceRange);
 
