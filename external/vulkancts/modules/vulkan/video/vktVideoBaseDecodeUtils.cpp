@@ -562,15 +562,16 @@ uint32_t VideoBaseDecoder::ResetPicDpbSlots(uint32_t picIndexSlotValidMask)
 	return m_dpbSlotsMask;
 }
 
-VideoBaseDecoder::VideoBaseDecoder (Parameters&& params)
-	: m_deviceContext							(params.context)
-	, m_profile									(*params.profile)
-	, m_dpb										(3)
-	, m_videoFrameBuffer						(params.framebuffer)
+VideoBaseDecoder::VideoBaseDecoder(Parameters&& params)
+	: m_deviceContext(params.context)
+	, m_profile(*params.profile)
+	, m_dpb(3)
+	, m_videoFrameBuffer(params.framebuffer)
 	// TODO: interface cleanup
-	, m_decodeFramesData						(params.context->getDeviceDriver(), params.context->device, params.context->decodeQueueFamilyIdx())
-	, m_queryResultWithStatus					(params.queryDecodeStatus)
-	, m_outOfOrderDecoding						(params.outOfOrderDecoding)
+	, m_decodeFramesData(params.context->getDeviceDriver(), params.context->device, params.context->decodeQueueFamilyIdx())
+	, m_queryResultWithStatus(params.queryDecodeStatus)
+	, m_outOfOrderDecoding(params.outOfOrderDecoding)
+
 {
 	std::fill(m_pictureToDpbSlotMap.begin(), m_pictureToDpbSlotMap.end(), -1);
 

@@ -18,11 +18,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- *//*!
+ */
+/*!
  * \file
  * \brief Video Decoding Base Classe Functionality
- *//*--------------------------------------------------------------------*/
- /*
+ */
+/*--------------------------------------------------------------------*/
+/*
  * Copyright 2020 NVIDIA Corporation.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,18 +40,18 @@
  * limitations under the License.
  */
 
-#include "vktVideoTestUtils.hpp"
 #include "extNvidiaVideoParserIf.hpp"
+#include "vktVideoTestUtils.hpp"
 
 #include "deMemory.h"
-#include "vkImageWithMemory.hpp"
 #include "vkBufferWithMemory.hpp"
+#include "vkImageWithMemory.hpp"
 
 #include <array>
-#include <vector>
-#include <list>
 #include <bitset>
+#include <list>
 #include <queue>
+#include <vector>
 
 namespace vkt
 {
@@ -68,42 +70,47 @@ bool videoLoggingEnabled();
 class VkImageResource : public VkVideoRefCountBase
 {
 public:
-	static VkResult Create(DeviceContext& vkDevCtx,
-						   const VkImageCreateInfo* pImageCreateInfo,
-						   VkMemoryPropertyFlags memoryPropertyFlags,
+	static VkResult Create(DeviceContext&					 vkDevCtx,
+						   const VkImageCreateInfo*			 pImageCreateInfo,
+						   VkMemoryPropertyFlags			 memoryPropertyFlags,
 						   VkSharedBaseObj<VkImageResource>& imageResource);
 
-	bool IsCompatible (const VkImageCreateInfo* pImageCreateInfo)
+	bool			IsCompatible(const VkImageCreateInfo* pImageCreateInfo)
 	{
 
-		if (pImageCreateInfo->extent.width > m_imageCreateInfo.extent.width) {
+		if (pImageCreateInfo->extent.width > m_imageCreateInfo.extent.width)
+		{
 			return false;
 		}
 
-		if (pImageCreateInfo->extent.height > m_imageCreateInfo.extent.height) {
+		if (pImageCreateInfo->extent.height > m_imageCreateInfo.extent.height)
+		{
 			return false;
 		}
 
-		if (pImageCreateInfo->arrayLayers > m_imageCreateInfo.arrayLayers) {
+		if (pImageCreateInfo->arrayLayers > m_imageCreateInfo.arrayLayers)
+		{
 			return false;
 		}
 
-		if (pImageCreateInfo->tiling != m_imageCreateInfo.tiling) {
+		if (pImageCreateInfo->tiling != m_imageCreateInfo.tiling)
+		{
 			return false;
 		}
 
-		if (pImageCreateInfo->imageType != m_imageCreateInfo.imageType) {
+		if (pImageCreateInfo->imageType != m_imageCreateInfo.imageType)
+		{
 			return false;
 		}
 
-		if (pImageCreateInfo->format != m_imageCreateInfo.format) {
+		if (pImageCreateInfo->format != m_imageCreateInfo.format)
+		{
 			return false;
 		}
 
 		return true;
 	}
 
-
 	virtual int32_t AddRef()
 	{
 		return ++m_refCount;
@@ -113,54 +120,83 @@ public:
 	{
 		uint32_t ret = --m_refCount;
 		// Destroy the device if ref-count reaches zero
-		if (ret == 0) {
+		if (ret == 0)
+		{
 			delete this;
 		}
 		return ret;
 	}
 
-	operator VkImage() const { return m_image; }
-	VkImage GetImage() const { return m_image; }
-	VkDevice GetDevice() const { return m_vkDevCtx.device; }
-	VkDeviceMemory GetDeviceMemory() const { return *m_vulkanDeviceMemory; }
+	operator VkImage() const
+	{
+		return m_image;
+	}
+	VkImage GetImage() const
+	{
+		return m_image;
+	}
+	VkDevice GetDevice() const
+	{
+		return m_vkDevCtx.device;
+	}
+	VkDeviceMemory GetDeviceMemory() const
+	{
+		return *m_vulkanDeviceMemory;
+	}
 
-	VkSharedBaseObj<VulkanDeviceMemoryImpl>& GetMemory() { return m_vulkanDeviceMemory; }
+	VkSharedBaseObj<VulkanDeviceMemoryImpl>& GetMemory()
+	{
+		return m_vulkanDeviceMemory;
+	}
 
-	VkDeviceSize GetImageDeviceMemorySize() const { return m_imageSize; }
-	VkDeviceSize GetImageDeviceMemoryOffset() const { return m_imageOffset; }
+	VkDeviceSize GetImageDeviceMemorySize() const
+	{
+		return m_imageSize;
+	}
+	VkDeviceSize GetImageDeviceMemoryOffset() const
+	{
+		return m_imageOffset;
+	}
 
-	const VkImageCreateInfo& GetImageCreateInfo() const { return m_imageCreateInfo; }
+	const VkImageCreateInfo& GetImageCreateInfo() const
+	{
+		return m_imageCreateInfo;
+	}
 
 private:
-	std::atomic<int32_t>    m_refCount;
-	const VkImageCreateInfo m_imageCreateInfo;
-	DeviceContext&			m_vkDevCtx;
-	VkImage                 m_image;
-	VkDeviceSize            m_imageOffset;
-	VkDeviceSize            m_imageSize;
+	std::atomic<int32_t>					m_refCount;
+	const VkImageCreateInfo					m_imageCreateInfo;
+	DeviceContext&							m_vkDevCtx;
+	VkImage									m_image;
+	VkDeviceSize							m_imageOffset;
+	VkDeviceSize							m_imageSize;
 	VkSharedBaseObj<VulkanDeviceMemoryImpl> m_vulkanDeviceMemory;
 
-	VkImageResource(DeviceContext& vkDevCtx,
-					const VkImageCreateInfo* pImageCreateInfo,
-					VkImage image, VkDeviceSize imageOffset, VkDeviceSize imageSize,
+	VkImageResource(DeviceContext&							 vkDevCtx,
+					const VkImageCreateInfo*				 pImageCreateInfo,
+					VkImage									 image,
+					VkDeviceSize							 imageOffset,
+					VkDeviceSize							 imageSize,
 					VkSharedBaseObj<VulkanDeviceMemoryImpl>& vulkanDeviceMemory)
-			: m_refCount(0), m_imageCreateInfo(*pImageCreateInfo), m_vkDevCtx(vkDevCtx),
-			m_image(image), m_imageOffset(imageOffset), m_imageSize(imageSize),
-			m_vulkanDeviceMemory(vulkanDeviceMemory) { }
+		: m_refCount(0), m_imageCreateInfo(*pImageCreateInfo), m_vkDevCtx(vkDevCtx), m_image(image), m_imageOffset(imageOffset), m_imageSize(imageSize), m_vulkanDeviceMemory(vulkanDeviceMemory)
+	{
+	}
 
 	void Destroy();
 
-	virtual ~VkImageResource() { Destroy(); }
+	virtual ~VkImageResource()
+	{
+		Destroy();
+	}
 };
 
 class VkImageResourceView : public VkVideoRefCountBase
 {
 public:
-	static VkResult Create(DeviceContext& vkDevCtx,
-						   VkSharedBaseObj<VkImageResource>& imageResource,
-						   VkImageSubresourceRange &imageSubresourceRange,
+	static VkResult Create(DeviceContext&						 vkDevCtx,
+						   VkSharedBaseObj<VkImageResource>&	 imageResource,
+						   VkImageSubresourceRange&				 imageSubresourceRange,
 						   VkSharedBaseObj<VkImageResourceView>& imageResourceView);
-
 
 	virtual int32_t AddRef()
 	{
@@ -171,18 +207,30 @@ public:
 	{
 		uint32_t ret = --m_refCount;
 		// Destroy the device if ref-count reaches zero
-		if (ret == 0) {
+		if (ret == 0)
+		{
 			delete this;
 		}
 		return ret;
 	}
 
-	operator VkImageView() const { return m_imageView; }
-	VkImageView GetImageView() const { return m_imageView; }
-	VkDevice GetDevice() const { return m_vkDevCtx.device; }
+	operator VkImageView() const
+	{
+		return m_imageView;
+	}
+	VkImageView GetImageView() const
+	{
+		return m_imageView;
+	}
+	VkDevice GetDevice() const
+	{
+		return m_vkDevCtx.device;
+	}
 
 	const VkImageSubresourceRange& GetImageSubresourceRange() const
-	{ return m_imageSubresourceRange; }
+	{
+		return m_imageSubresourceRange;
+	}
 
 	const VkSharedBaseObj<VkImageResource>& GetImageResource()
 	{
@@ -190,91 +238,101 @@ public:
 	}
 
 private:
-	std::atomic<int32_t>             m_refCount;
-	DeviceContext&				     m_vkDevCtx;
+	std::atomic<int32_t>			 m_refCount;
+	DeviceContext&					 m_vkDevCtx;
 	VkSharedBaseObj<VkImageResource> m_imageResource;
-	VkImageView                      m_imageView;
-	VkImageSubresourceRange          m_imageSubresourceRange;
+	VkImageView						 m_imageView;
+	VkImageSubresourceRange			 m_imageSubresourceRange;
 
-
-	VkImageResourceView(DeviceContext& vkDevCtx,
+	VkImageResourceView(DeviceContext&					  vkDevCtx,
 						VkSharedBaseObj<VkImageResource>& imageResource,
-						VkImageView imageView, VkImageSubresourceRange &imageSubresourceRange)
-			: m_refCount(0), m_vkDevCtx(vkDevCtx), m_imageResource(imageResource),
-			m_imageView(imageView), m_imageSubresourceRange(imageSubresourceRange)
-	{}
+						VkImageView						  imageView,
+						VkImageSubresourceRange&		  imageSubresourceRange)
+		: m_refCount(0), m_vkDevCtx(vkDevCtx), m_imageResource(imageResource), m_imageView(imageView), m_imageSubresourceRange(imageSubresourceRange)
+	{
+	}
 
 	virtual ~VkImageResourceView();
 };
 
-struct DecodedFrame {
-	int32_t pictureIndex;
-	int32_t displayWidth;
-	int32_t displayHeight;
+struct DecodedFrame
+{
+	int32_t								 pictureIndex;
+	int32_t								 displayWidth;
+	int32_t								 displayHeight;
 	VkSharedBaseObj<VkImageResourceView> decodedImageView;
 	VkSharedBaseObj<VkImageResourceView> outputImageView;
-	VkFence frameCompleteFence; // If valid, the fence is signaled when the decoder is done decoding the frame.
-	VkFence frameConsumerDoneFence; // If valid, the fence is signaled when the consumer (graphics, compute or display) is done using the frame.
-	VkSemaphore frameCompleteSemaphore; // If valid, the semaphore is signaled when the decoder is done decoding the frame.
-	VkSemaphore frameConsumerDoneSemaphore; // If valid, the semaphore is signaled when the consumer (graphics, compute or display) is done using the frame.
-	VkQueryPool queryPool; // queryPool handle used for the video queries.
-	int32_t startQueryId;  // query Id used for the this frame.
-	uint32_t numQueries;   // usually one query per frame
+	VkFence								 frameCompleteFence; // If valid, the fence is signaled when the decoder is done decoding the frame.
+	VkFence								 frameConsumerDoneFence; // If valid, the fence is signaled when the consumer (graphics, compute or display) is done using the frame.
+	VkSemaphore							 frameCompleteSemaphore; // If valid, the semaphore is signaled when the decoder is done decoding the frame.
+	VkSemaphore							 frameConsumerDoneSemaphore; // If valid, the semaphore is signaled when the consumer (graphics, compute or display) is done using the frame.
+	VkQueryPool							 queryPool; // queryPool handle used for the video queries.
+	int32_t								 startQueryId; // query Id used for the this frame.
+	uint32_t							 numQueries; // usually one query per frame
 	// If multiple queues are available, submittedVideoQueueIndex is the queue index that the video frame was submitted to.
 	// if only one queue is available, submittedVideoQueueIndex will always have a value of "0".
-	int32_t  submittedVideoQueueIndex;
-	uint64_t timestamp;
-	uint32_t hasConsummerSignalFence : 1;
-	uint32_t hasConsummerSignalSemaphore : 1;
+	int32_t								 submittedVideoQueueIndex;
+	uint64_t							 timestamp;
+	uint32_t							 hasConsummerSignalFence : 1;
+	uint32_t							 hasConsummerSignalSemaphore : 1;
 	// For debugging
-	int32_t decodeOrder;
-	int32_t displayOrder;
+	int32_t								 decodeOrder;
+	int32_t								 displayOrder;
 
-	void Reset()
+	void								 Reset()
 	{
-		pictureIndex = -1;
-		displayWidth = 0;
-		displayHeight = 0;
-		decodedImageView  = nullptr;
-		outputImageView = nullptr;
-		frameCompleteFence = VkFence();
-		frameConsumerDoneFence = VkFence();
-		frameCompleteSemaphore = VkSemaphore();
-		frameConsumerDoneSemaphore = VkSemaphore();
-		queryPool = VkQueryPool();
-		startQueryId = 0;
-		numQueries = 0;
-		submittedVideoQueueIndex = 0;
-		timestamp = 0;
-		hasConsummerSignalFence = false;
+		pictureIndex				= -1;
+		displayWidth				= 0;
+		displayHeight				= 0;
+		decodedImageView			= nullptr;
+		outputImageView				= nullptr;
+		frameCompleteFence			= VkFence();
+		frameConsumerDoneFence		= VkFence();
+		frameCompleteSemaphore		= VkSemaphore();
+		frameConsumerDoneSemaphore	= VkSemaphore();
+		queryPool					= VkQueryPool();
+		startQueryId				= 0;
+		numQueries					= 0;
+		submittedVideoQueueIndex	= 0;
+		timestamp					= 0;
+		hasConsummerSignalFence		= false;
 		hasConsummerSignalSemaphore = false;
 		// For debugging
-		decodeOrder = 0;
-		displayOrder = 0;
+		decodeOrder					= 0;
+		displayOrder				= 0;
 	}
 };
 
-struct DecodedFrameRelease {
-	int32_t pictureIndex;
+struct DecodedFrameRelease
+{
+	int32_t			 pictureIndex;
 	VkVideotimestamp timestamp;
-	uint32_t hasConsummerSignalFence : 1;
-	uint32_t hasConsummerSignalSemaphore : 1;
+	uint32_t		 hasConsummerSignalFence : 1;
+	uint32_t		 hasConsummerSignalSemaphore : 1;
 	// For debugging
-	int32_t decodeOrder;
-	int32_t displayOrder;
+	int32_t			 decodeOrder;
+	int32_t			 displayOrder;
 };
 
 // Keeps track of data associated with active internal reference frames
-class DpbSlot {
+class DpbSlot
+{
 public:
-	bool isInUse() { return (m_reserved || m_inUse); }
+	bool isInUse()
+	{
+		return (m_reserved || m_inUse);
+	}
 
-	bool isAvailable() { return !isInUse(); }
+	bool isAvailable()
+	{
+		return !isInUse();
+	}
 
 	bool Invalidate()
 	{
 		bool wasInUse = isInUse();
-		if (m_picBuf) {
+		if (m_picBuf)
+		{
 			m_picBuf->Release();
 			m_picBuf = NULL;
 		}
@@ -284,18 +342,23 @@ public:
 		return wasInUse;
 	}
 
-	vkPicBuffBase* getPictureResource() { return m_picBuf; }
+	vkPicBuffBase* getPictureResource()
+	{
+		return m_picBuf;
+	}
 
 	vkPicBuffBase* setPictureResource(vkPicBuffBase* picBuf, int32_t age = 0)
 	{
 		vkPicBuffBase* oldPic = m_picBuf;
 
-		if (picBuf) {
+		if (picBuf)
+		{
 			picBuf->AddRef();
 		}
 		m_picBuf = picBuf;
 
-		if (oldPic) {
+		if (oldPic)
+		{
 			oldPic->Release();
 		}
 
@@ -303,391 +366,443 @@ public:
 		return oldPic;
 	}
 
-	void Reserve() { m_reserved = true; }
+	void Reserve()
+	{
+		m_reserved = true;
+	}
 
 	void MarkInUse(int32_t age = 0)
 	{
 		m_pictureId = age;
-		m_inUse = true;
+		m_inUse		= true;
 	}
 
-	int32_t getAge() { return m_pictureId; }
+	int32_t getAge()
+	{
+		return m_pictureId;
+	}
 
 private:
-	int32_t m_pictureId; // PictureID at map time (age)
+	int32_t		   m_pictureId; // PictureID at map time (age)
 	vkPicBuffBase* m_picBuf; // Associated resource
 
-	uint32_t m_reserved : 1;
-	uint32_t m_inUse : 1;
+	uint32_t	   m_reserved : 1;
+	uint32_t	   m_inUse : 1;
 };
 
-class DpbSlots {
+class DpbSlots
+{
 public:
-    explicit DpbSlots(uint8_t dpbMaxSize)
-        : m_dpbMaxSize(0)
-        , m_slotInUseMask(0)
-        , m_dpb(m_dpbMaxSize)
-        , m_dpbSlotsAvailable()
-    {
-        Init(dpbMaxSize, false);
-    }
+	explicit DpbSlots(uint8_t dpbMaxSize)
+		: m_dpbMaxSize(0)
+		, m_slotInUseMask(0)
+		, m_dpb(m_dpbMaxSize)
+		, m_dpbSlotsAvailable()
+	{
+		Init(dpbMaxSize, false);
+	}
 
-    int32_t Init(uint8_t newDpbMaxSize, bool reconfigure)
-    {
-        assert(newDpbMaxSize <= VkParserPerFrameDecodeParameters::MAX_DPB_REF_AND_SETUP_SLOTS);
+	int32_t Init(uint8_t newDpbMaxSize, bool reconfigure)
+	{
+		assert(newDpbMaxSize <= VkParserPerFrameDecodeParameters::MAX_DPB_REF_AND_SETUP_SLOTS);
 
-        if (!reconfigure) {
-            Deinit();
-        }
+		if (!reconfigure)
+		{
+			Deinit();
+		}
 
-        if (reconfigure && (newDpbMaxSize < m_dpbMaxSize)) {
-            return m_dpbMaxSize;
-        }
+		if (reconfigure && (newDpbMaxSize < m_dpbMaxSize))
+		{
+			return m_dpbMaxSize;
+		}
 
-        uint8_t oldDpbMaxSize = reconfigure ? m_dpbMaxSize : 0;
-        m_dpbMaxSize = newDpbMaxSize;
+		uint8_t oldDpbMaxSize = reconfigure ? m_dpbMaxSize : 0;
+		m_dpbMaxSize		  = newDpbMaxSize;
 
-        m_dpb.resize(m_dpbMaxSize);
+		m_dpb.resize(m_dpbMaxSize);
 
-        for (uint32_t ndx = oldDpbMaxSize; ndx < m_dpbMaxSize; ndx++) {
-            m_dpb[ndx].Invalidate();
-        }
+		for (uint32_t ndx = oldDpbMaxSize; ndx < m_dpbMaxSize; ndx++)
+		{
+			m_dpb[ndx].Invalidate();
+		}
 
-        for (uint8_t dpbIndx = oldDpbMaxSize; dpbIndx < m_dpbMaxSize; dpbIndx++) {
-            m_dpbSlotsAvailable.push(dpbIndx);
-        }
+		for (uint8_t dpbIndx = oldDpbMaxSize; dpbIndx < m_dpbMaxSize; dpbIndx++)
+		{
+			m_dpbSlotsAvailable.push(dpbIndx);
+		}
 
-        return m_dpbMaxSize;
-    }
+		return m_dpbMaxSize;
+	}
 
-    void Deinit()
-    {
-        for (uint32_t ndx = 0; ndx < m_dpbMaxSize; ndx++) {
-            m_dpb[ndx].Invalidate();
-        }
+	void Deinit()
+	{
+		for (uint32_t ndx = 0; ndx < m_dpbMaxSize; ndx++)
+		{
+			m_dpb[ndx].Invalidate();
+		}
 
-        while (!m_dpbSlotsAvailable.empty()) {
-            m_dpbSlotsAvailable.pop();
-        }
+		while (!m_dpbSlotsAvailable.empty())
+		{
+			m_dpbSlotsAvailable.pop();
+		}
 
-        m_dpbMaxSize = 0;
-        m_slotInUseMask = 0;
-    }
+		m_dpbMaxSize	= 0;
+		m_slotInUseMask = 0;
+	}
 
-    ~DpbSlots() { Deinit(); }
+	~DpbSlots()
+	{
+		Deinit();
+	}
 
-    int8_t AllocateSlot()
-    {
-        if (m_dpbSlotsAvailable.empty()) {
-            assert(!"No more h.264/5 DPB slots are available");
-            return -1;
-        }
-        int8_t slot = (int8_t)m_dpbSlotsAvailable.front();
-        assert((slot >= 0) && ((uint8_t)slot < m_dpbMaxSize));
-        m_slotInUseMask |= (1 << slot);
-        m_dpbSlotsAvailable.pop();
-        m_dpb[slot].Reserve();
-        return slot;
-    }
+	int8_t AllocateSlot()
+	{
+		if (m_dpbSlotsAvailable.empty())
+		{
+			assert(!"No more h.264/5 DPB slots are available");
+			return -1;
+		}
+		int8_t slot = (int8_t)m_dpbSlotsAvailable.front();
+		assert((slot >= 0) && ((uint8_t)slot < m_dpbMaxSize));
+		m_slotInUseMask |= (1 << slot);
+		m_dpbSlotsAvailable.pop();
+		m_dpb[slot].Reserve();
+		return slot;
+	}
 
-    void FreeSlot(int8_t slot)
-    {
-        assert((uint8_t)slot < m_dpbMaxSize);
-        assert(m_dpb[slot].isInUse());
-        assert(m_slotInUseMask & (1 << slot));
+	void FreeSlot(int8_t slot)
+	{
+		assert((uint8_t)slot < m_dpbMaxSize);
+		assert(m_dpb[slot].isInUse());
+		assert(m_slotInUseMask & (1 << slot));
 
-        m_dpb[slot].Invalidate();
-        m_dpbSlotsAvailable.push(slot);
-        m_slotInUseMask &= ~(1 << slot);
-    }
+		m_dpb[slot].Invalidate();
+		m_dpbSlotsAvailable.push(slot);
+		m_slotInUseMask &= ~(1 << slot);
+	}
 
-    DpbSlot& operator[](uint32_t slot)
-    {
-        assert(slot < m_dpbMaxSize);
-        return m_dpb[slot];
-    }
+	DpbSlot& operator[](uint32_t slot)
+	{
+		assert(slot < m_dpbMaxSize);
+		return m_dpb[slot];
+	}
 
-    // Return the remapped index given an external decode render target index
-    int8_t GetSlotOfPictureResource(vkPicBuffBase* pPic)
-    {
-        for (int8_t i = 0; i < (int8_t)m_dpbMaxSize; i++) {
-            if ((m_slotInUseMask & (1 << i)) && m_dpb[i].isInUse() && (pPic == m_dpb[i].getPictureResource())) {
-                return i;
-            }
-        }
-        return -1; // not found
-    }
+	// Return the remapped index given an external decode render target index
+	int8_t GetSlotOfPictureResource(vkPicBuffBase* pPic)
+	{
+		for (int8_t i = 0; i < (int8_t)m_dpbMaxSize; i++)
+		{
+			if ((m_slotInUseMask & (1 << i)) && m_dpb[i].isInUse() && (pPic == m_dpb[i].getPictureResource()))
+			{
+				return i;
+			}
+		}
+		return -1; // not found
+	}
 
-    void MapPictureResource(vkPicBuffBase* pPic, uint8_t dpbSlot,
-        int32_t age = 0)
-    {
-        for (uint8_t slot = 0; slot < m_dpbMaxSize; slot++) {
-            if (slot == dpbSlot) {
-                m_dpb[slot].setPictureResource(pPic, age);
-            } else if (pPic) {
-                if (m_dpb[slot].getPictureResource() == pPic) {
-                    FreeSlot(slot);
-                }
-            }
-        }
-    }
+	void MapPictureResource(vkPicBuffBase* pPic, uint8_t dpbSlot, int32_t age = 0)
+	{
+		for (uint8_t slot = 0; slot < m_dpbMaxSize; slot++)
+		{
+			if (slot == dpbSlot)
+			{
+				m_dpb[slot].setPictureResource(pPic, age);
+			}
+			else if (pPic)
+			{
+				if (m_dpb[slot].getPictureResource() == pPic)
+				{
+					FreeSlot(slot);
+				}
+			}
+		}
+	}
 
-    uint32_t getSlotInUseMask() { return m_slotInUseMask; }
+	uint32_t getSlotInUseMask()
+	{
+		return m_slotInUseMask;
+	}
 
-    uint32_t getMaxSize() { return m_dpbMaxSize; }
+	uint32_t getMaxSize()
+	{
+		return m_dpbMaxSize;
+	}
 
 private:
-    uint8_t m_dpbMaxSize;
-    uint32_t m_slotInUseMask;
-    std::vector<DpbSlot> m_dpb;
-    std::queue<uint8_t> m_dpbSlotsAvailable;
+	uint8_t				 m_dpbMaxSize;
+	uint32_t			 m_slotInUseMask;
+	std::vector<DpbSlot> m_dpb;
+	std::queue<uint8_t>	 m_dpbSlotsAvailable;
 };
 
 class VulkanVideoSession : public VkVideoRefCountBase
 {
-    enum { MAX_BOUND_MEMORY = 9 };
+	enum
+	{
+		MAX_BOUND_MEMORY = 9
+	};
+
 public:
-    static VkResult Create(DeviceContext& devCtx,
-                           uint32_t            videoQueueFamily,
-                           VkVideoCoreProfile* pVideoProfile,
-                           VkFormat            pictureFormat,
-                           const VkExtent2D&   maxCodedExtent,
-                           VkFormat            referencePicturesFormat,
-                           uint32_t            maxDpbSlots,
-                           uint32_t            maxActiveReferencePictures,
-                           VkSharedBaseObj<VulkanVideoSession>& videoSession);
+	static VkResult Create(DeviceContext&						devCtx,
+						   uint32_t								videoQueueFamily,
+						   VkVideoCoreProfile*					pVideoProfile,
+						   VkFormat								pictureFormat,
+						   const VkExtent2D&					maxCodedExtent,
+						   VkFormat								referencePicturesFormat,
+						   uint32_t								maxDpbSlots,
+						   uint32_t								maxActiveReferencePictures,
+						   VkSharedBaseObj<VulkanVideoSession>& videoSession);
 
-    bool IsCompatible (VkDevice device,
-                        uint32_t            videoQueueFamily,
-                        VkVideoCoreProfile* pVideoProfile,
-                        VkFormat            pictureFormat,
-                        const VkExtent2D&   maxCodedExtent,
-                        VkFormat            referencePicturesFormat,
-                        uint32_t            maxDpbSlots,
-                        uint32_t            maxActiveReferencePictures)
-    {
-        if (*pVideoProfile != m_profile) {
-            return false;
-        }
+	bool			IsCompatible(VkDevice			 device,
+								 uint32_t			 videoQueueFamily,
+								 VkVideoCoreProfile* pVideoProfile,
+								 VkFormat			 pictureFormat,
+								 const VkExtent2D&	 maxCodedExtent,
+								 VkFormat			 referencePicturesFormat,
+								 uint32_t			 maxDpbSlots,
+								 uint32_t			 maxActiveReferencePictures)
+	{
+		if (*pVideoProfile != m_profile)
+		{
+			return false;
+		}
 
-        if (maxCodedExtent.width > m_createInfo.maxCodedExtent.width) {
-            return false;
-        }
+		if (maxCodedExtent.width > m_createInfo.maxCodedExtent.width)
+		{
+			return false;
+		}
 
-        if (maxCodedExtent.height > m_createInfo.maxCodedExtent.height) {
-            return false;
-        }
+		if (maxCodedExtent.height > m_createInfo.maxCodedExtent.height)
+		{
+			return false;
+		}
 
-        if (maxDpbSlots > m_createInfo.maxDpbSlots) {
-            return false;
-        }
+		if (maxDpbSlots > m_createInfo.maxDpbSlots)
+		{
+			return false;
+		}
 
-        if (maxActiveReferencePictures > m_createInfo.maxActiveReferencePictures) {
-            return false;
-        }
+		if (maxActiveReferencePictures > m_createInfo.maxActiveReferencePictures)
+		{
+			return false;
+		}
 
-        if (m_createInfo.referencePictureFormat != referencePicturesFormat) {
-            return false;
-        }
+		if (m_createInfo.referencePictureFormat != referencePicturesFormat)
+		{
+			return false;
+		}
 
-        if (m_createInfo.pictureFormat != pictureFormat) {
-            return false;
-        }
+		if (m_createInfo.pictureFormat != pictureFormat)
+		{
+			return false;
+		}
 
-        if (m_devCtx.device != device) {
-            return false;
-        }
+		if (m_devCtx.device != device)
+		{
+			return false;
+		}
 
-        if (m_createInfo.queueFamilyIndex != videoQueueFamily) {
-            return false;
-        }
+		if (m_createInfo.queueFamilyIndex != videoQueueFamily)
+		{
+			return false;
+		}
 
-        return true;
-    }
+		return true;
+	}
 
+	virtual int32_t AddRef()
+	{
+		return ++m_refCount;
+	}
 
-    virtual int32_t AddRef()
-    {
-        return ++m_refCount;
-    }
+	virtual int32_t Release()
+	{
+		uint32_t ret = --m_refCount;
+		// Destroy the device if refcount reaches zero
+		if (ret == 0)
+		{
+			delete this;
+		}
+		return ret;
+	}
 
-    virtual int32_t Release()
-    {
-        uint32_t ret = --m_refCount;
-        // Destroy the device if refcount reaches zero
-        if (ret == 0) {
-            delete this;
-        }
-        return ret;
-    }
-
-    VkVideoSessionKHR GetVideoSession() const { return m_videoSession; }
+	VkVideoSessionKHR GetVideoSession() const
+	{
+		return m_videoSession;
+	}
 
 private:
+	VulkanVideoSession(DeviceContext&	   devCtx,
+					   VkVideoCoreProfile* pVideoProfile)
+		: m_refCount(0), m_profile(*pVideoProfile), m_devCtx(devCtx), m_createInfo{VK_STRUCTURE_TYPE_VIDEO_SESSION_CREATE_INFO_KHR, NULL}, m_videoSession(VkVideoSessionKHR()), m_memoryBound{}
+	{
+	}
 
-    VulkanVideoSession(DeviceContext& devCtx,
-                   VkVideoCoreProfile* pVideoProfile)
-       : m_refCount(0), m_profile(*pVideoProfile), m_devCtx(devCtx),
-         m_createInfo{ VK_STRUCTURE_TYPE_VIDEO_SESSION_CREATE_INFO_KHR, NULL },
-         m_videoSession(VkVideoSessionKHR()), m_memoryBound{}
-    {
-    }
-
-    ~VulkanVideoSession()
-    {
+	~VulkanVideoSession()
+	{
 		auto& vk = m_devCtx.getDeviceDriver();
-        if (!!m_videoSession) {
+		if (!!m_videoSession)
+		{
 			vk.destroyVideoSessionKHR(m_devCtx.device, m_videoSession, NULL);
-            m_videoSession = VkVideoSessionKHR();
-        }
+			m_videoSession = VkVideoSessionKHR();
+		}
 
-        for (uint32_t memIdx = 0; memIdx < MAX_BOUND_MEMORY; memIdx++) {
-            if (m_memoryBound[memIdx] != VK_NULL_HANDLE) {
-                vk.freeMemory(m_devCtx.device, m_memoryBound[memIdx], 0);
-                m_memoryBound[memIdx] = VK_NULL_HANDLE;
-            }
-        }
-    }
+		for (uint32_t memIdx = 0; memIdx < MAX_BOUND_MEMORY; memIdx++)
+		{
+			if (m_memoryBound[memIdx] != VK_NULL_HANDLE)
+			{
+				vk.freeMemory(m_devCtx.device, m_memoryBound[memIdx], 0);
+				m_memoryBound[memIdx] = VK_NULL_HANDLE;
+			}
+		}
+	}
 
 private:
-    std::atomic<int32_t>                   m_refCount;
-    VkVideoCoreProfile                     m_profile;
-	DeviceContext&						   m_devCtx;
-    VkVideoSessionCreateInfoKHR            m_createInfo;
-    VkVideoSessionKHR                      m_videoSession;
-    VkDeviceMemory                         m_memoryBound[MAX_BOUND_MEMORY];
+	std::atomic<int32_t>		m_refCount;
+	VkVideoCoreProfile			m_profile;
+	DeviceContext&				m_devCtx;
+	VkVideoSessionCreateInfoKHR m_createInfo;
+	VkVideoSessionKHR			m_videoSession;
+	VkDeviceMemory				m_memoryBound[MAX_BOUND_MEMORY];
 };
 
-
-class VkParserVideoPictureParameters : public VkVideoRefCountBase {
+class VkParserVideoPictureParameters : public VkVideoRefCountBase
+{
 public:
-    static const uint32_t MAX_VPS_IDS =  16;
-    static const uint32_t MAX_SPS_IDS =  32;
-    static const uint32_t MAX_PPS_IDS = 256;
+	static const uint32_t				   MAX_VPS_IDS = 16;
+	static const uint32_t				   MAX_SPS_IDS = 32;
+	static const uint32_t				   MAX_PPS_IDS = 256;
 
-    //! Increment the reference count by 1.
-    virtual int32_t AddRef();
+	//! Increment the reference count by 1.
+	virtual int32_t						   AddRef();
 
-    //! Decrement the reference count by 1. When the reference count
-    //! goes to 0 the object is automatically destroyed.
-    virtual int32_t Release();
+	//! Decrement the reference count by 1. When the reference count
+	//! goes to 0 the object is automatically destroyed.
+	virtual int32_t						   Release();
 
-    static VkParserVideoPictureParameters* VideoPictureParametersFromBase(VkVideoRefCountBase* pBase ) {
-        if (!pBase) {
-            return NULL;
-        }
-        VkParserVideoPictureParameters* pPictureParameters = static_cast<VkParserVideoPictureParameters*>(pBase);
-        if (m_refClassId == pPictureParameters->m_classId) {
-            return pPictureParameters;
-        }
-        assert(!"Invalid VkParserVideoPictureParameters from base");
-        return nullptr;
-    }
+	static VkParserVideoPictureParameters* VideoPictureParametersFromBase(VkVideoRefCountBase* pBase)
+	{
+		if (!pBase)
+		{
+			return NULL;
+		}
+		VkParserVideoPictureParameters* pPictureParameters = static_cast<VkParserVideoPictureParameters*>(pBase);
+		if (m_refClassId == pPictureParameters->m_classId)
+		{
+			return pPictureParameters;
+		}
+		assert(!"Invalid VkParserVideoPictureParameters from base");
+		return nullptr;
+	}
 
-    static VkResult AddPictureParameters(DeviceContext& deviceContext,
-                                         VkSharedBaseObj<VulkanVideoSession>& videoSession,
-                                         VkSharedBaseObj<StdVideoPictureParametersSet>& stdPictureParametersSet,
-                                         VkSharedBaseObj<VkParserVideoPictureParameters>& currentVideoPictureParameters);
+	static VkResult AddPictureParameters(DeviceContext&									  deviceContext,
+										 VkSharedBaseObj<VulkanVideoSession>&			  videoSession,
+										 VkSharedBaseObj<StdVideoPictureParametersSet>&	  stdPictureParametersSet,
+										 VkSharedBaseObj<VkParserVideoPictureParameters>& currentVideoPictureParameters);
 
-    static bool CheckStdObjectBeforeUpdate(VkSharedBaseObj<StdVideoPictureParametersSet>& pictureParametersSet,
-                                           VkSharedBaseObj<VkParserVideoPictureParameters>& currentVideoPictureParameters);
+	static bool		CheckStdObjectBeforeUpdate(VkSharedBaseObj<StdVideoPictureParametersSet>&	pictureParametersSet,
+											   VkSharedBaseObj<VkParserVideoPictureParameters>& currentVideoPictureParameters);
 
-    static VkResult Create(DeviceContext& deviceContext,
-                           VkSharedBaseObj<VkParserVideoPictureParameters>& templatePictureParameters,
-                           VkSharedBaseObj<VkParserVideoPictureParameters>& videoPictureParameters);
+	static VkResult Create(DeviceContext&									deviceContext,
+						   VkSharedBaseObj<VkParserVideoPictureParameters>& templatePictureParameters,
+						   VkSharedBaseObj<VkParserVideoPictureParameters>& videoPictureParameters);
 
-    static int32_t PopulateH264UpdateFields(const StdVideoPictureParametersSet* pStdPictureParametersSet,
-                                            VkVideoDecodeH264SessionParametersAddInfoKHR& h264SessionParametersAddInfo);
+	static int32_t	PopulateH264UpdateFields(const StdVideoPictureParametersSet*		   pStdPictureParametersSet,
+											 VkVideoDecodeH264SessionParametersAddInfoKHR& h264SessionParametersAddInfo);
 
-    static int32_t PopulateH265UpdateFields(const StdVideoPictureParametersSet* pStdPictureParametersSet,
-                                            VkVideoDecodeH265SessionParametersAddInfoKHR& h265SessionParametersAddInfo);
+	static int32_t	PopulateH265UpdateFields(const StdVideoPictureParametersSet*		   pStdPictureParametersSet,
+											 VkVideoDecodeH265SessionParametersAddInfoKHR& h265SessionParametersAddInfo);
 
-    VkResult CreateParametersObject(VkSharedBaseObj<VulkanVideoSession>& videoSession,
-                                    const StdVideoPictureParametersSet* pStdVideoPictureParametersSet,
-                                    VkParserVideoPictureParameters* pTemplatePictureParameters);
+	VkResult		CreateParametersObject(VkSharedBaseObj<VulkanVideoSession>& videoSession,
+										   const StdVideoPictureParametersSet*	pStdVideoPictureParametersSet,
+										   VkParserVideoPictureParameters*		pTemplatePictureParameters);
 
-    VkResult UpdateParametersObject(StdVideoPictureParametersSet* pStdVideoPictureParametersSet);
+	VkResult		UpdateParametersObject(StdVideoPictureParametersSet* pStdVideoPictureParametersSet);
 
-    VkResult HandleNewPictureParametersSet(VkSharedBaseObj<VulkanVideoSession>& videoSession,
-                                           StdVideoPictureParametersSet* pStdVideoPictureParametersSet);
+	VkResult		HandleNewPictureParametersSet(VkSharedBaseObj<VulkanVideoSession>& videoSession,
+												  StdVideoPictureParametersSet*		   pStdVideoPictureParametersSet);
 
-    operator VkVideoSessionParametersKHR() const {
-        assert(m_sessionParameters != VK_NULL_HANDLE);
-        return m_sessionParameters;
-    }
+	operator VkVideoSessionParametersKHR() const
+	{
+		assert(m_sessionParameters != VK_NULL_HANDLE);
+		return m_sessionParameters;
+	}
 
-    VkVideoSessionParametersKHR GetVideoSessionParametersKHR() const {
-        assert(m_sessionParameters != VK_NULL_HANDLE);
-        return m_sessionParameters;
-    }
+	VkVideoSessionParametersKHR GetVideoSessionParametersKHR() const
+	{
+		assert(m_sessionParameters != VK_NULL_HANDLE);
+		return m_sessionParameters;
+	}
 
-    int32_t GetId() const { return m_Id; }
+	int32_t GetId() const
+	{
+		return m_Id;
+	}
 
-    bool HasVpsId(uint32_t vpsId) const {
-        return m_vpsIdsUsed[vpsId];
-    }
+	bool HasVpsId(uint32_t vpsId) const
+	{
+		return m_vpsIdsUsed[vpsId];
+	}
 
-    bool HasSpsId(uint32_t spsId) const {
-        return m_spsIdsUsed[spsId];
-    }
+	bool HasSpsId(uint32_t spsId) const
+	{
+		return m_spsIdsUsed[spsId];
+	}
 
-    bool HasPpsId(uint32_t ppsId) const {
-        return m_ppsIdsUsed[ppsId];
-    }
+	bool HasPpsId(uint32_t ppsId) const
+	{
+		return m_ppsIdsUsed[ppsId];
+	}
 
+	bool	 UpdatePictureParametersHierarchy(VkSharedBaseObj<StdVideoPictureParametersSet>& pictureParametersObject);
 
-    bool UpdatePictureParametersHierarchy(VkSharedBaseObj<StdVideoPictureParametersSet>& pictureParametersObject);
-
-    VkResult AddPictureParametersToQueue(VkSharedBaseObj<StdVideoPictureParametersSet>& pictureParametersSet);
-    int32_t FlushPictureParametersQueue(VkSharedBaseObj<VulkanVideoSession>& videoSession);
+	VkResult AddPictureParametersToQueue(VkSharedBaseObj<StdVideoPictureParametersSet>& pictureParametersSet);
+	int32_t	 FlushPictureParametersQueue(VkSharedBaseObj<VulkanVideoSession>& videoSession);
 
 protected:
-    VkParserVideoPictureParameters(DeviceContext& deviceContext,
-                                   VkSharedBaseObj<VkParserVideoPictureParameters>& templatePictureParameters)
-        : m_classId(m_refClassId),
-          m_Id(-1),
-          m_refCount(0),
-          m_deviceContext(deviceContext),
-          m_videoSession(),
-          m_sessionParameters(),
-          m_templatePictureParameters(templatePictureParameters) { }
+	VkParserVideoPictureParameters(DeviceContext&									deviceContext,
+								   VkSharedBaseObj<VkParserVideoPictureParameters>& templatePictureParameters)
+		: m_classId(m_refClassId), m_Id(-1), m_refCount(0), m_deviceContext(deviceContext), m_videoSession(), m_sessionParameters(), m_templatePictureParameters(templatePictureParameters)
+	{
+	}
 
-    virtual ~VkParserVideoPictureParameters();
+	virtual ~VkParserVideoPictureParameters();
 
 private:
-    static const char*              m_refClassId;
-    static int32_t                  m_currentId;
-    const char*                     m_classId;
-    int32_t                         m_Id;
-    std::atomic<int32_t>            m_refCount;
-	DeviceContext&					m_deviceContext;
-    VkSharedBaseObj<VulkanVideoSession> m_videoSession;
-    VkVideoSessionParametersKHR     m_sessionParameters;
-    std::bitset<MAX_VPS_IDS>        m_vpsIdsUsed;
-    std::bitset<MAX_SPS_IDS>        m_spsIdsUsed;
-    std::bitset<MAX_PPS_IDS>        m_ppsIdsUsed;
-    VkSharedBaseObj<VkParserVideoPictureParameters> m_templatePictureParameters; // needed only for the create
+	static const char*										  m_refClassId;
+	static int32_t											  m_currentId;
+	const char*												  m_classId;
+	int32_t													  m_Id;
+	std::atomic<int32_t>									  m_refCount;
+	DeviceContext&											  m_deviceContext;
+	VkSharedBaseObj<VulkanVideoSession>						  m_videoSession;
+	VkVideoSessionParametersKHR								  m_sessionParameters;
+	std::bitset<MAX_VPS_IDS>								  m_vpsIdsUsed;
+	std::bitset<MAX_SPS_IDS>								  m_spsIdsUsed;
+	std::bitset<MAX_PPS_IDS>								  m_ppsIdsUsed;
+	int														  m_updateCount{0};
+	VkSharedBaseObj<VkParserVideoPictureParameters>			  m_templatePictureParameters; // needed only for the create
 
-    std::queue<VkSharedBaseObj<StdVideoPictureParametersSet>>  m_pictureParametersQueue;
-    VkSharedBaseObj<StdVideoPictureParametersSet>              m_lastPictParamsQueue[StdVideoPictureParametersSet::NUM_OF_TYPES];
+	std::queue<VkSharedBaseObj<StdVideoPictureParametersSet>> m_pictureParametersQueue;
+	VkSharedBaseObj<StdVideoPictureParametersSet>			  m_lastPictParamsQueue[StdVideoPictureParametersSet::NUM_OF_TYPES];
 };
 
-
-struct nvVideoDecodeH264DpbSlotInfo {
+struct nvVideoDecodeH264DpbSlotInfo
+{
 	VkVideoDecodeH264DpbSlotInfoKHR dpbSlotInfo;
 	StdVideoDecodeH264ReferenceInfo stdReferenceInfo;
 
 	nvVideoDecodeH264DpbSlotInfo()
-			: dpbSlotInfo()
-			  , stdReferenceInfo()
+		: dpbSlotInfo()
+		, stdReferenceInfo()
 	{
 	}
 
 	const VkVideoDecodeH264DpbSlotInfoKHR* Init(int8_t slotIndex)
 	{
 		assert((slotIndex >= 0) && (slotIndex < (int8_t)VkParserPerFrameDecodeParameters::MAX_DPB_REF_AND_SETUP_SLOTS));
-		dpbSlotInfo.sType = VK_STRUCTURE_TYPE_VIDEO_DECODE_H264_DPB_SLOT_INFO_KHR;
-		dpbSlotInfo.pNext = NULL;
+		dpbSlotInfo.sType			  = VK_STRUCTURE_TYPE_VIDEO_DECODE_H264_DPB_SLOT_INFO_KHR;
+		dpbSlotInfo.pNext			  = NULL;
 		dpbSlotInfo.pStdReferenceInfo = &stdReferenceInfo;
 		return &dpbSlotInfo;
 	}
@@ -697,25 +812,32 @@ struct nvVideoDecodeH264DpbSlotInfo {
 		return (dpbSlotInfo.pStdReferenceInfo == &stdReferenceInfo);
 	}
 
-	operator bool() const { return IsReference(); }
-	void Invalidate() { memset(this, 0x00, sizeof(*this)); }
+	operator bool() const
+	{
+		return IsReference();
+	}
+	void Invalidate()
+	{
+		memset(this, 0x00, sizeof(*this));
+	}
 };
 
-struct nvVideoDecodeH265DpbSlotInfo {
+struct nvVideoDecodeH265DpbSlotInfo
+{
 	VkVideoDecodeH265DpbSlotInfoKHR dpbSlotInfo;
 	StdVideoDecodeH265ReferenceInfo stdReferenceInfo;
 
 	nvVideoDecodeH265DpbSlotInfo()
-			: dpbSlotInfo()
-			  , stdReferenceInfo()
+		: dpbSlotInfo()
+		, stdReferenceInfo()
 	{
 	}
 
 	const VkVideoDecodeH265DpbSlotInfoKHR* Init(int8_t slotIndex)
 	{
 		assert((slotIndex >= 0) && (slotIndex < (int8_t)VkParserPerFrameDecodeParameters::MAX_DPB_REF_SLOTS));
-		dpbSlotInfo.sType = VK_STRUCTURE_TYPE_VIDEO_DECODE_H265_DPB_SLOT_INFO_KHR;
-		dpbSlotInfo.pNext = NULL;
+		dpbSlotInfo.sType			  = VK_STRUCTURE_TYPE_VIDEO_DECODE_H265_DPB_SLOT_INFO_KHR;
+		dpbSlotInfo.pNext			  = NULL;
 		dpbSlotInfo.pStdReferenceInfo = &stdReferenceInfo;
 		return &dpbSlotInfo;
 	}
@@ -725,64 +847,80 @@ struct nvVideoDecodeH265DpbSlotInfo {
 		return (dpbSlotInfo.pStdReferenceInfo == &stdReferenceInfo);
 	}
 
-	operator bool() const { return IsReference(); }
+	operator bool() const
+	{
+		return IsReference();
+	}
 
-	void Invalidate() { memset(this, 0x00, sizeof(*this)); }
+	void Invalidate()
+	{
+		memset(this, 0x00, sizeof(*this));
+	}
 };
 
 using VulkanBitstreamBufferPool = VulkanVideoRefCountedPool<VulkanBitstreamBufferImpl, 64>;
 
 // A pool of bitstream buffers and a collection of command buffers for all frames in the decode sequence.
-class NvVkDecodeFrameData {
+class NvVkDecodeFrameData
+{
 public:
 	NvVkDecodeFrameData(const DeviceInterface& vkd, VkDevice device, uint32_t decodeQueueIdx)
-			: m_deviceInterface(vkd),
-			m_device(device),
-			m_decodeQueueIdx(decodeQueueIdx),
-			m_videoCommandPool(),
-			m_bitstreamBuffersQueue() {}
+		: m_deviceInterface(vkd), m_device(device), m_decodeQueueIdx(decodeQueueIdx), m_videoCommandPool(), m_bitstreamBuffersQueue()
+	{
+	}
 
-	void deinit() {
+	void deinit()
+	{
 
-		if (!!m_videoCommandPool) {
+		if (!!m_videoCommandPool)
+		{
 			m_deviceInterface.freeCommandBuffers(m_device, m_videoCommandPool, (uint32_t)m_commandBuffers.size(), &m_commandBuffers[0]);
 			m_deviceInterface.destroyCommandPool(m_device, m_videoCommandPool, NULL);
 			m_videoCommandPool = VkCommandPool();
 		}
 	}
 
-	~NvVkDecodeFrameData() {
+	~NvVkDecodeFrameData()
+	{
 		deinit();
 	}
 
-	size_t resize(size_t maxDecodeFramesCount) {
+	size_t resize(size_t maxDecodeFramesCount)
+	{
 		size_t allocatedCommandBuffers = 0;
-		if (!m_videoCommandPool) {
+		if (!m_videoCommandPool)
+		{
 			VkCommandPoolCreateInfo cmdPoolInfo = {};
-			cmdPoolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-			cmdPoolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-			cmdPoolInfo.queueFamilyIndex = m_decodeQueueIdx;
-			VkResult result = m_deviceInterface.createCommandPool(m_device, &cmdPoolInfo, nullptr, &m_videoCommandPool);
+			cmdPoolInfo.sType					= VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+			cmdPoolInfo.flags					= VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+			cmdPoolInfo.queueFamilyIndex		= m_decodeQueueIdx;
+			VkResult result						= m_deviceInterface.createCommandPool(m_device, &cmdPoolInfo, nullptr, &m_videoCommandPool);
 			assert(result == VK_SUCCESS);
-			if (result != VK_SUCCESS) {
+			if (result != VK_SUCCESS)
+			{
 				fprintf(stderr, "\nERROR: CreateCommandPool() result: 0x%x\n", result);
 			}
 
 			VkCommandBufferAllocateInfo cmdInfo = {};
-			cmdInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-			cmdInfo.commandBufferCount = (uint32_t)maxDecodeFramesCount;
-			cmdInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-			cmdInfo.commandPool = m_videoCommandPool;
+			cmdInfo.sType						= VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+			cmdInfo.commandBufferCount			= (uint32_t)maxDecodeFramesCount;
+			cmdInfo.level						= VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+			cmdInfo.commandPool					= m_videoCommandPool;
 
 			m_commandBuffers.resize(maxDecodeFramesCount);
 			result = m_deviceInterface.allocateCommandBuffers(m_device, &cmdInfo, &m_commandBuffers[0]);
 			assert(result == VK_SUCCESS);
-			if (result != VK_SUCCESS) {
+			if (result != VK_SUCCESS)
+			{
 				fprintf(stderr, "\nERROR: AllocateCommandBuffers() result: 0x%x\n", result);
-			} else {
+			}
+			else
+			{
 				allocatedCommandBuffers = maxDecodeFramesCount;
 			}
-		} else {
+		}
+		else
+		{
 			allocatedCommandBuffers = m_commandBuffers.size();
 			assert(maxDecodeFramesCount <= allocatedCommandBuffers);
 		}
@@ -790,137 +928,154 @@ public:
 		return allocatedCommandBuffers;
 	}
 
-	VkCommandBuffer GetCommandBuffer(uint32_t slot) {
+	VkCommandBuffer GetCommandBuffer(uint32_t slot)
+	{
 		assert(slot < m_commandBuffers.size());
 		return m_commandBuffers[slot];
 	}
 
-	size_t size() {
+	size_t size()
+	{
 		return m_commandBuffers.size();
 	}
 
-	VulkanBitstreamBufferPool& GetBitstreamBuffersQueue() { return m_bitstreamBuffersQueue; }
+	VulkanBitstreamBufferPool& GetBitstreamBuffersQueue()
+	{
+		return m_bitstreamBuffersQueue;
+	}
 
 private:
-	const DeviceInterface&                                m_deviceInterface;
-	VkDevice m_device;
-	uint32_t m_decodeQueueIdx;
-	VkCommandPool                                             m_videoCommandPool;
-	std::vector<VkCommandBuffer>                              m_commandBuffers;
-	VulkanBitstreamBufferPool                                 m_bitstreamBuffersQueue;
+	const DeviceInterface&		 m_deviceInterface;
+	VkDevice					 m_device;
+	uint32_t					 m_decodeQueueIdx;
+	VkCommandPool				 m_videoCommandPool;
+	std::vector<VkCommandBuffer> m_commandBuffers;
+	VulkanBitstreamBufferPool	 m_bitstreamBuffersQueue;
 };
 
-struct nvVideoH264PicParameters {
-	enum { MAX_REF_PICTURES_LIST_ENTRIES = 16 };
+struct nvVideoH264PicParameters
+{
+	enum
+	{
+		MAX_REF_PICTURES_LIST_ENTRIES = 16
+	};
 
-	StdVideoDecodeH264PictureInfo stdPictureInfo;
-	VkVideoDecodeH264PictureInfoKHR pictureInfo;
+	StdVideoDecodeH264PictureInfo				 stdPictureInfo;
+	VkVideoDecodeH264PictureInfoKHR				 pictureInfo;
 	VkVideoDecodeH264SessionParametersAddInfoKHR pictureParameters;
-	nvVideoDecodeH264DpbSlotInfo currentDpbSlotInfo;
-	nvVideoDecodeH264DpbSlotInfo dpbRefList[MAX_REF_PICTURES_LIST_ENTRIES];
+	nvVideoDecodeH264DpbSlotInfo				 currentDpbSlotInfo;
+	nvVideoDecodeH264DpbSlotInfo				 dpbRefList[MAX_REF_PICTURES_LIST_ENTRIES];
 };
 
 /*******************************************************/
 //! \struct nvVideoH265PicParameters
 //! HEVC picture parameters
 /*******************************************************/
-struct nvVideoH265PicParameters {
-	enum { MAX_REF_PICTURES_LIST_ENTRIES = 16 };
-
-	StdVideoDecodeH265PictureInfo stdPictureInfo;
-	VkVideoDecodeH265PictureInfoKHR pictureInfo;
-	VkVideoDecodeH265SessionParametersAddInfoKHR pictureParameters;
-	nvVideoDecodeH265DpbSlotInfo dpbRefList[MAX_REF_PICTURES_LIST_ENTRIES];
-};
-
-class VulkanVideoFrameBuffer : public IVulkanVideoFrameBufferParserCb {
-public:
-	// Synchronization
-	struct FrameSynchronizationInfo {
-		VkFence frameCompleteFence;
-		VkSemaphore frameCompleteSemaphore;
-		VkFence frameConsumerDoneFence;
-		VkSemaphore frameConsumerDoneSemaphore;
-		VkQueryPool queryPool;
-		int32_t startQueryId;
-		uint32_t numQueries;
-		uint32_t hasFrameCompleteSignalFence : 1;
-		uint32_t hasFrameCompleteSignalSemaphore : 1;
+struct nvVideoH265PicParameters
+{
+	enum
+	{
+		MAX_REF_PICTURES_LIST_ENTRIES = 16
 	};
 
-	struct ReferencedObjectsInfo {
+	StdVideoDecodeH265PictureInfo				 stdPictureInfo;
+	VkVideoDecodeH265PictureInfoKHR				 pictureInfo;
+	VkVideoDecodeH265SessionParametersAddInfoKHR pictureParameters;
+	nvVideoDecodeH265DpbSlotInfo				 dpbRefList[MAX_REF_PICTURES_LIST_ENTRIES];
+};
+
+class VulkanVideoFrameBuffer : public IVulkanVideoFrameBufferParserCb
+{
+public:
+	// Synchronization
+	struct FrameSynchronizationInfo
+	{
+		VkFence		frameCompleteFence;
+		VkSemaphore frameCompleteSemaphore;
+		VkFence		frameConsumerDoneFence;
+		VkSemaphore frameConsumerDoneSemaphore;
+		VkQueryPool queryPool;
+		int32_t		startQueryId;
+		uint32_t	numQueries;
+		uint32_t	hasFrameCompleteSignalFence : 1;
+		uint32_t	hasFrameCompleteSignalSemaphore : 1;
+	};
+
+	struct ReferencedObjectsInfo
+	{
 
 		// The bitstream Buffer
-		const VkVideoRefCountBase*     pBitstreamData;
+		const VkVideoRefCountBase* pBitstreamData;
 		// PPS
-		const VkVideoRefCountBase*     pStdPps;
+		const VkVideoRefCountBase* pStdPps;
 		// SPS
-		const VkVideoRefCountBase*     pStdSps;
+		const VkVideoRefCountBase* pStdSps;
 		// VPS
-		const VkVideoRefCountBase*     pStdVps;
+		const VkVideoRefCountBase* pStdVps;
 
 		ReferencedObjectsInfo(const VkVideoRefCountBase* pBitstreamDataRef,
 							  const VkVideoRefCountBase* pStdPpsRef,
 							  const VkVideoRefCountBase* pStdSpsRef,
 							  const VkVideoRefCountBase* pStdVpsRef = nullptr)
-				: pBitstreamData(pBitstreamDataRef)
-				  , pStdPps(pStdPpsRef)
-				  , pStdSps(pStdSpsRef)
-				  , pStdVps(pStdVpsRef) {}
+			: pBitstreamData(pBitstreamDataRef)
+			, pStdPps(pStdPpsRef)
+			, pStdSps(pStdSpsRef)
+			, pStdVps(pStdVpsRef)
+		{
+		}
 	};
 
-	struct PictureResourceInfo {
-		VkImage  image;
-		VkFormat imageFormat;
+	struct PictureResourceInfo
+	{
+		VkImage		  image;
+		VkFormat	  imageFormat;
 		VkImageLayout currentImageLayout;
 	};
 
 	virtual int32_t InitImagePool(const VkVideoProfileInfoKHR* pDecodeProfile,
-								  uint32_t                 numImages,
-								  VkFormat                 dpbImageFormat,
-								  VkFormat                 outImageFormat,
-								  const VkExtent2D&        codedExtent,
-								  const VkExtent2D&        maxImageExtent,
-								  VkImageUsageFlags        dpbImageUsage,
-								  VkImageUsageFlags        outImageUsage,
-								  uint32_t                 queueFamilyIndex,
-								  bool                     useImageArray = false,
-								  bool                     useImageViewArray = false,
-								  bool                     useSeparateOutputImage = false,
-								  bool                     useLinearOutput = false) = 0;
+								  uint32_t					   numImages,
+								  VkFormat					   dpbImageFormat,
+								  VkFormat					   outImageFormat,
+								  const VkExtent2D&			   codedExtent,
+								  const VkExtent2D&			   maxImageExtent,
+								  VkImageUsageFlags			   dpbImageUsage,
+								  VkImageUsageFlags			   outImageUsage,
+								  uint32_t					   queueFamilyIndex,
+								  bool						   useImageArray		  = false,
+								  bool						   useImageViewArray	  = false,
+								  bool						   useSeparateOutputImage = false,
+								  bool						   useLinearOutput		  = false)																																																						= 0;
 
-	virtual int32_t QueuePictureForDecode(int8_t picId, VkParserDecodePictureInfo* pDecodePictureInfo,
-										  ReferencedObjectsInfo* pReferencedObjectsInfo,
-										  FrameSynchronizationInfo* pFrameSynchronizationInfo) = 0;
-	virtual int32_t DequeueDecodedPicture(DecodedFrame* pDecodedFrame) = 0;
-	virtual int32_t ReleaseDisplayedPicture(DecodedFrameRelease** pDecodedFramesRelease, uint32_t numFramesToRelease) = 0;
-	virtual int32_t GetDpbImageResourcesByIndex(uint32_t numResources, const int8_t* referenceSlotIndexes,
-												VkVideoPictureResourceInfoKHR* pictureResources,
-												PictureResourceInfo* pictureResourcesInfo,
-												VkImageLayout newDpbImageLayerLayout = VK_IMAGE_LAYOUT_VIDEO_DECODE_DPB_KHR) = 0;
-	virtual int32_t GetCurrentImageResourceByIndex(int8_t referenceSlotIndex,
+	virtual int32_t QueuePictureForDecode(int8_t picId, VkParserDecodePictureInfo* pDecodePictureInfo, ReferencedObjectsInfo* pReferencedObjectsInfo, FrameSynchronizationInfo* pFrameSynchronizationInfo)																			= 0;
+	virtual int32_t DequeueDecodedPicture(DecodedFrame* pDecodedFrame)																																																				= 0;
+	virtual int32_t ReleaseDisplayedPicture(DecodedFrameRelease** pDecodedFramesRelease, uint32_t numFramesToRelease)																																								= 0;
+	virtual int32_t GetDpbImageResourcesByIndex(uint32_t numResources, const int8_t* referenceSlotIndexes, VkVideoPictureResourceInfoKHR* pictureResources, PictureResourceInfo* pictureResourcesInfo, VkImageLayout newDpbImageLayerLayout = VK_IMAGE_LAYOUT_VIDEO_DECODE_DPB_KHR) = 0;
+	virtual int32_t GetCurrentImageResourceByIndex(int8_t						  referenceSlotIndex,
 												   VkVideoPictureResourceInfoKHR* dpbPictureResource,
-												   PictureResourceInfo* dpbPictureResourceInfo,
-												   VkImageLayout newDpbImageLayerLayout = VK_IMAGE_LAYOUT_VIDEO_DECODE_DPB_KHR,
-												   VkVideoPictureResourceInfoKHR* outputPictureResource = nullptr,
-												   PictureResourceInfo* outputPictureResourceInfo = nullptr,
-												   VkImageLayout newOutputImageLayerLayout = VK_IMAGE_LAYOUT_MAX_ENUM) = 0;
-	virtual int32_t ReleaseImageResources(uint32_t numResources, const uint32_t* indexes) = 0;
-	virtual int32_t SetPicNumInDecodeOrder(int32_t picId, int32_t picNumInDecodeOrder) = 0;
-	virtual int32_t SetPicNumInDisplayOrder(int32_t picId, int32_t picNumInDisplayOrder) = 0;
-	virtual size_t GetSize() = 0;
-	virtual size_t GetDisplayedFrameCount() const = 0;
+												   PictureResourceInfo*			  dpbPictureResourceInfo,
+												   VkImageLayout				  newDpbImageLayerLayout	= VK_IMAGE_LAYOUT_VIDEO_DECODE_DPB_KHR,
+												   VkVideoPictureResourceInfoKHR* outputPictureResource		= nullptr,
+												   PictureResourceInfo*			  outputPictureResourceInfo = nullptr,
+												   VkImageLayout				  newOutputImageLayerLayout = VK_IMAGE_LAYOUT_MAX_ENUM)																																								= 0;
+	virtual int32_t ReleaseImageResources(uint32_t numResources, const uint32_t* indexes)																																															= 0;
+	virtual int32_t SetPicNumInDecodeOrder(int32_t picId, int32_t picNumInDecodeOrder)																																																= 0;
+	virtual int32_t SetPicNumInDisplayOrder(int32_t picId, int32_t picNumInDisplayOrder)																																															= 0;
+	virtual size_t	GetSize()																																																														= 0;
+	virtual size_t	GetDisplayedFrameCount() const																																																									= 0;
 
-	virtual ~VulkanVideoFrameBuffer() { }
+	virtual ~VulkanVideoFrameBuffer()
+	{
+	}
 
-	static VkResult Create(DeviceContext* devCtx,
-						   bool supportsQueries,
+	static VkResult Create(DeviceContext*							devCtx,
+						   bool										supportsQueries,
 						   VkSharedBaseObj<VulkanVideoFrameBuffer>& vkVideoFrameBuffer);
 };
 
-struct NvVkDecodeFrameDataSlot {
-	uint32_t                                            slot;
-	VkCommandBuffer                                     commandBuffer;
+struct NvVkDecodeFrameDataSlot
+{
+	uint32_t		slot;
+	VkCommandBuffer commandBuffer;
 };
 
 class VideoBaseDecoder final : public VkParserVideoDecodeClient
@@ -931,35 +1086,34 @@ class VideoBaseDecoder final : public VkParserVideoDecodeClient
 	};
 
 public:
-
 	struct CachedDecodeParameters
 	{
-		VkParserPictureData pd;
-		VkParserDecodePictureInfo decodedPictureInfo;
-		VkParserPerFrameDecodeParameters pictureParams;
-		VkVideoReferenceSlotInfoKHR	referenceSlots[VkParserPerFrameDecodeParameters::MAX_DPB_REF_AND_SETUP_SLOTS];
-		VkVideoReferenceSlotInfoKHR setupReferenceSlot;
+		VkParserPictureData								 pd;
+		VkParserDecodePictureInfo						 decodedPictureInfo;
+		VkParserPerFrameDecodeParameters				 pictureParams;
+		VkVideoReferenceSlotInfoKHR						 referenceSlots[VkParserPerFrameDecodeParameters::MAX_DPB_REF_AND_SETUP_SLOTS];
+		VkVideoReferenceSlotInfoKHR						 setupReferenceSlot;
 
-		VkVideoDecodeH264DpbSlotInfoKHR h264SlotInfo{};
-		StdVideoDecodeH264ReferenceInfo h264RefInfo{};
-		VkVideoDecodeH265DpbSlotInfoKHR h265SlotInfo{};
-		StdVideoDecodeH265ReferenceInfo h265RefInfo{};
+		VkVideoDecodeH264DpbSlotInfoKHR					 h264SlotInfo{};
+		StdVideoDecodeH264ReferenceInfo					 h264RefInfo{};
+		VkVideoDecodeH265DpbSlotInfoKHR					 h265SlotInfo{};
+		StdVideoDecodeH265ReferenceInfo					 h265RefInfo{};
 
-		nvVideoH264PicParameters h264PicParams;
-		nvVideoH265PicParameters h265PicParams;
-		NvVkDecodeFrameDataSlot frameDataSlot;
-		VkVideoBeginCodingInfoKHR decodeBeginInfo{};
-		VkBufferMemoryBarrier2KHR bitstreamBufferMemoryBarrier;
-		std::vector<VkImageMemoryBarrier2KHR> imageBarriers;
-		VulkanVideoFrameBuffer::PictureResourceInfo currentDpbPictureResourceInfo;
-		VulkanVideoFrameBuffer::PictureResourceInfo currentOutputPictureResourceInfo;
-		VkVideoPictureResourceInfoKHR currentOutputPictureResource;
-		VkVideoPictureResourceInfoKHR*				 pOutputPictureResource{};
-		VulkanVideoFrameBuffer::PictureResourceInfo* pOutputPictureResourceInfo{};
-		VulkanVideoFrameBuffer::PictureResourceInfo pictureResourcesInfo[VkParserPerFrameDecodeParameters::MAX_DPB_REF_AND_SETUP_SLOTS];
+		nvVideoH264PicParameters						 h264PicParams;
+		nvVideoH265PicParameters						 h265PicParams;
+		NvVkDecodeFrameDataSlot							 frameDataSlot;
+		VkVideoBeginCodingInfoKHR						 decodeBeginInfo{};
+		VkBufferMemoryBarrier2KHR						 bitstreamBufferMemoryBarrier;
+		std::vector<VkImageMemoryBarrier2KHR>			 imageBarriers;
+		VulkanVideoFrameBuffer::PictureResourceInfo		 currentDpbPictureResourceInfo;
+		VulkanVideoFrameBuffer::PictureResourceInfo		 currentOutputPictureResourceInfo;
+		VkVideoPictureResourceInfoKHR					 currentOutputPictureResource;
+		VkVideoPictureResourceInfoKHR*					 pOutputPictureResource{};
+		VulkanVideoFrameBuffer::PictureResourceInfo*	 pOutputPictureResourceInfo{};
+		VulkanVideoFrameBuffer::PictureResourceInfo		 pictureResourcesInfo[VkParserPerFrameDecodeParameters::MAX_DPB_REF_AND_SETUP_SLOTS];
 
-		std::vector<VkVideoReferenceSlotInfoKHR> fullReferenceSlots;
-		int32_t picNumInDecodeOrder;
+		std::vector<VkVideoReferenceSlotInfoKHR>		 fullReferenceSlots;
+		int32_t											 picNumInDecodeOrder;
 		VulkanVideoFrameBuffer::FrameSynchronizationInfo frameSynchronizationInfo;
 
 		~CachedDecodeParameters()
@@ -972,12 +1126,15 @@ public:
 		}
 	};
 
-	struct Parameters {
-		DeviceContext* context{};
-		const VkVideoCoreProfile* profile{};
-		size_t framesToCheck{};
-		bool queryDecodeStatus{};
-		bool outOfOrderDecoding{};
+	struct Parameters
+	{
+		DeviceContext*							context{};
+		const VkVideoCoreProfile*				profile{};
+		int										gopSize{};
+		int										gopCount{};
+		size_t									framesToCheck{};
+		bool									queryDecodeStatus{};
+		bool									outOfOrderDecoding{};
 		VkSharedBaseObj<VulkanVideoFrameBuffer> framebuffer;
 	};
 	VideoBaseDecoder(Parameters&& params);
@@ -991,7 +1148,10 @@ public:
 	{
 		return m_videoFrameBuffer.Get();
 	}
-	const VkVideoCapabilitiesKHR* getVideoCaps() const { return &m_videoCaps; }
+	const VkVideoCapabilitiesKHR* getVideoCaps() const
+	{
+		return &m_videoCaps;
+	}
 
 	// VkParserVideoDecodeClient callbacks
 	// Returns max number of reference frames (always at least 2 for MPEG-2)
@@ -1044,12 +1204,12 @@ public:
 	virtual int32_t StartVideoSequence(const VkParserDetectedVideoFormat* pVideoFormat);
 	virtual int32_t DecodePictureWithParameters(de::MovePtr<CachedDecodeParameters>& params);
 
-	void ApplyPictureParameters(de::MovePtr<CachedDecodeParameters>& cachedParameters);
-	void WaitForFrameFences(de::MovePtr<CachedDecodeParameters>& cachedParameters);
-	void RecordCommandBuffer(de::MovePtr<CachedDecodeParameters>& cachedParameters);
-	void SubmitQueue(de::MovePtr<CachedDecodeParameters>& cachedParameters);
-	void QueryDecodeResults(de::MovePtr<CachedDecodeParameters>& cachedParameters);
-	void DecodeCachedPictures();
+	void			ApplyPictureParameters(de::MovePtr<CachedDecodeParameters>& cachedParameters);
+	void			WaitForFrameFences(de::MovePtr<CachedDecodeParameters>& cachedParameters);
+	void			RecordCommandBuffer(de::MovePtr<CachedDecodeParameters>& cachedParameters);
+	void			SubmitQueue(de::MovePtr<CachedDecodeParameters>& cachedParameters);
+	void			QueryDecodeResults(de::MovePtr<CachedDecodeParameters>& cachedParameters);
+	void			DecodeCachedPictures();
 
 	VkDeviceSize	GetBitstreamBuffer(VkDeviceSize							   size,
 									   VkDeviceSize							   minBitstreamBufferOffsetAlignment,
@@ -1059,7 +1219,7 @@ public:
 									   VkSharedBaseObj<VulkanBitstreamBuffer>& bitstreamBuffer) override;
 
 	// Client methods
-	void	Deinitialize();
+	void			Deinitialize();
 	int32_t			GetCurrentFrameData(uint32_t slotId, NvVkDecodeFrameDataSlot& frameDataSlot)
 	{
 		if (slotId < m_decodeFramesData.size())
@@ -1071,25 +1231,28 @@ public:
 		return -1;
 	}
 
-	DeviceContext*												m_deviceContext{};
-	VkVideoCoreProfile											m_profile{};
+	DeviceContext*					m_deviceContext{};
+	VkVideoCoreProfile				m_profile{};
 	// Parser fields
-	int32_t														m_nCurrentPictureID{};
-	uint32_t													m_dpbSlotsMask{};
-	uint32_t													m_fieldPicFlagMask{};
-	DpbSlots													m_dpb;
-	std::array<int8_t, MAX_FRM_CNT>								m_pictureToDpbSlotMap;
-	VkFormat													m_dpbImageFormat{VK_FORMAT_UNDEFINED};
-	VkFormat													m_outImageFormat{VK_FORMAT_UNDEFINED};
-	uint32_t													m_maxNumDecodeSurfaces{1};
-	uint32_t													m_maxNumDpbSlots{1};
-	vector<AllocationPtr>										m_videoDecodeSessionAllocs;
-	uint32_t													m_numDecodeSurfaces{};
-	Move<VkCommandPool>											m_videoCommandPool{};
-	VkVideoCapabilitiesKHR										m_videoCaps{};
-	VkVideoDecodeCapabilitiesKHR								m_decodeCaps{};
-	VkVideoCodecOperationFlagsKHR								m_supportedVideoCodecs{};
-	inline bool dpbAndOutputCoincide() const { return m_decodeCaps.flags & VK_VIDEO_DECODE_CAPABILITY_DPB_AND_OUTPUT_COINCIDE_BIT_KHR; }
+	int32_t							m_nCurrentPictureID{};
+	uint32_t						m_dpbSlotsMask{};
+	uint32_t						m_fieldPicFlagMask{};
+	DpbSlots						m_dpb;
+	std::array<int8_t, MAX_FRM_CNT> m_pictureToDpbSlotMap;
+	VkFormat						m_dpbImageFormat{VK_FORMAT_UNDEFINED};
+	VkFormat						m_outImageFormat{VK_FORMAT_UNDEFINED};
+	uint32_t						m_maxNumDecodeSurfaces{1};
+	uint32_t						m_maxNumDpbSlots{1};
+	vector<AllocationPtr>			m_videoDecodeSessionAllocs;
+	uint32_t						m_numDecodeSurfaces{};
+	Move<VkCommandPool>				m_videoCommandPool{};
+	VkVideoCapabilitiesKHR			m_videoCaps{};
+	VkVideoDecodeCapabilitiesKHR	m_decodeCaps{};
+	VkVideoCodecOperationFlagsKHR	m_supportedVideoCodecs{};
+	inline bool						dpbAndOutputCoincide() const
+	{
+		return m_decodeCaps.flags & VK_VIDEO_DECODE_CAPABILITY_DPB_AND_OUTPUT_COINCIDE_BIT_KHR;
+	}
 
 	VkSharedBaseObj<VulkanVideoSession>							m_videoSession{};
 	VkSharedBaseObj<VulkanVideoFrameBuffer>						m_videoFrameBuffer{};
@@ -1104,7 +1267,7 @@ public:
 	VkSharedBaseObj<VkParserVideoPictureParameters>				m_currentPictureParameters{};
 	bool														m_queryResultWithStatus{false};
 
-	bool m_outOfOrderDecoding{false};
+	bool														m_outOfOrderDecoding{false};
 	vector<VkParserPerFrameDecodeParameters*>					m_pPerFrameDecodeParameters;
 	vector<VkParserDecodePictureInfo*>							m_pVulkanParserDecodePictureInfo;
 	vector<NvVkDecodeFrameData*>								m_pFrameDatas;
@@ -1133,18 +1296,18 @@ public:
 	bool														m_resetDecoder{false};
 };
 
-de::MovePtr<vkt::ycbcr::MultiPlaneImageData> getDecodedImage (const DeviceInterface&	vkd,
-															  VkDevice					device,
-															  Allocator&				allocator,
-															  VkImage					image,
-															  VkImageLayout				layout,
-															  VkFormat					format,
-															  VkExtent2D				codedExtent,
-															 VkSemaphore 				frameCompleteSem,
-															  deUint32					queueFamilyIndexTransfer,
-															  deUint32					queueFamilyIndexDecode);
+de::MovePtr<vkt::ycbcr::MultiPlaneImageData> getDecodedImage(const DeviceInterface& vkd,
+															 VkDevice				device,
+															 Allocator&				allocator,
+															 VkImage				image,
+															 VkImageLayout			layout,
+															 VkFormat				format,
+															 VkExtent2D				codedExtent,
+															 VkSemaphore			frameCompleteSem,
+															 deUint32				queueFamilyIndexTransfer,
+															 deUint32				queueFamilyIndexDecode);
 
-} // video
-} // vkt
+} // namespace video
+} // namespace vkt
 
 #endif // _VKTVIDEOBASEDECODEUTILS_HPP
