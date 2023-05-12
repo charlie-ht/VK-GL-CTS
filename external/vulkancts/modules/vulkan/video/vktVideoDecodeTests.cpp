@@ -16,33 +16,35 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- *//*!
+ */
+/*!
  * \file
  * \brief Video decoding tests
- *//*--------------------------------------------------------------------*/
+ */
+/*--------------------------------------------------------------------*/
 
 #include "vktVideoDecodeTests.hpp"
 #include "vktVideoTestUtils.hpp"
 
-#include "tcuTestLog.hpp"
-#include "tcuPlatform.hpp"
 #include "tcuFunctionLibrary.hpp"
+#include "tcuPlatform.hpp"
+#include "tcuTestLog.hpp"
 
-#include <deDefs.h>
+#include "vkCmdUtil.hpp"
 #include "vkDefs.hpp"
 #include "vkImageWithMemory.hpp"
-#include "vkCmdUtil.hpp"
+#include <deDefs.h>
 
 #ifdef DE_BUILD_VIDEO
-	#include "extESExtractor.hpp"
-	#include "vktVideoBaseDecodeUtils.hpp"
-    #include "vktVideoReferenceChecksums.hpp"
+#include "extESExtractor.hpp"
+#include "vktVideoBaseDecodeUtils.hpp"
+#include "vktVideoReferenceChecksums.hpp"
 
-	#include "extNvidiaVideoParserIf.hpp"
+#include "extNvidiaVideoParserIf.hpp"
 // FIXME: The samples repo is missing this internal include from their H265 decoder
-	#include "nvVulkanh265ScalingList.h"
-	#include <VulkanH264Decoder.h>
-	#include <VulkanH265Decoder.h>
+#include "nvVulkanh265ScalingList.h"
+#include <VulkanH264Decoder.h>
+#include <VulkanH265Decoder.h>
 #endif
 
 namespace vkt
@@ -58,24 +60,24 @@ using de::MovePtr;
 
 enum TestType
 {
-	TEST_TYPE_H264_DECODE_I,						   // Case 6
-	TEST_TYPE_H264_DECODE_I_P,						   // Case 7
+	TEST_TYPE_H264_DECODE_I, // Case 6
+	TEST_TYPE_H264_DECODE_I_P, // Case 7
 	TEST_TYPE_H264_DECODE_CLIP_A,
-	TEST_TYPE_H264_DECODE_I_P_B_13,					   // Case 7a
-	TEST_TYPE_H264_DECODE_I_P_NOT_MATCHING_ORDER,	   // Case 8
+	TEST_TYPE_H264_DECODE_I_P_B_13, // Case 7a
+	TEST_TYPE_H264_DECODE_I_P_NOT_MATCHING_ORDER, // Case 8
 	TEST_TYPE_H264_DECODE_I_P_B_13_NOT_MATCHING_ORDER, // Case 8a
-	TEST_TYPE_H264_DECODE_QUERY_RESULT_WITH_STATUS,	   // Case 9
-	TEST_TYPE_H264_DECODE_RESOLUTION_CHANGE,		   // Case 17
-	TEST_TYPE_H264_DECODE_RESOLUTION_CHANGE_DPB,	   // Case 18
-	TEST_TYPE_H264_DECODE_INTERLEAVED,				   // Case 21
-	TEST_TYPE_H264_BOTH_DECODE_ENCODE_INTERLEAVED,	   // Case 23
-	TEST_TYPE_H264_H265_DECODE_INTERLEAVED,			   // Case 24
+	TEST_TYPE_H264_DECODE_QUERY_RESULT_WITH_STATUS, // Case 9
+	TEST_TYPE_H264_DECODE_RESOLUTION_CHANGE, // Case 17
+	TEST_TYPE_H264_DECODE_RESOLUTION_CHANGE_DPB, // Case 18
+	TEST_TYPE_H264_DECODE_INTERLEAVED, // Case 21
+	TEST_TYPE_H264_BOTH_DECODE_ENCODE_INTERLEAVED, // Case 23
+	TEST_TYPE_H264_H265_DECODE_INTERLEAVED, // Case 24
 
-	TEST_TYPE_H265_DECODE_I,						   // Case 15
-	TEST_TYPE_H265_DECODE_I_P,						   // Case 16
+	TEST_TYPE_H265_DECODE_I, // Case 15
+	TEST_TYPE_H265_DECODE_I_P, // Case 16
 	TEST_TYPE_H265_DECODE_CLIP_D,
-	TEST_TYPE_H265_DECODE_I_P_NOT_MATCHING_ORDER,	   // Case 16-2
-	TEST_TYPE_H265_DECODE_I_P_B_13,					   // Case 16-3
+	TEST_TYPE_H265_DECODE_I_P_NOT_MATCHING_ORDER, // Case 16-2
+	TEST_TYPE_H265_DECODE_I_P_B_13, // Case 16-3
 	TEST_TYPE_H265_DECODE_I_P_B_13_NOT_MATCHING_ORDER, // Case 16-4
 
 	TEST_TYPE_LAST
@@ -113,45 +115,66 @@ static const std::string& frameReferenceChecksum(TestType test, int frameNumber)
 
 struct TestDefinition
 {
+	enum Option
+	{
+		// The default is to do nothing additional to ordinary playback.
+		Default			 = 0,
+		// All decode operations will have their status checked for success (Q2 2023: not all vendors support these)
+		UseStatusQueries = 1 << 0,
+		// Do not playback the clip in the "normal fashion", instead cached decode parameters for later process
+		// this is primarily used to support out-of-order submission test cases, and per-GOP handling.
+		CachedDecoding	 = 1 << 1
+	};
+
 	TestType		   testType;
 
+	// On-disk file name of the clip to use for the test.
+	// TODO: Should make this a byte interface rather that files based.
 	const char*		   videoClipFilename;
-
-	// Used for the default size of the parser's bitstream buffer, file size of clip rounded up to the next power of 2.
+	// Used for the default size of the parser's bitstream buffer, file size of clip rounded up to the next power of 2 is a safe choice.
 	size_t			   videoClipSizeInBytes;
 
 	// Once the frame with this number is processed, the test stops.
 	size_t			   framesToCheck;
 
-	// TODO: Video profile & level
 	VkVideoCoreProfile profile;
 
-	// Whether to perform video status queries during coding operations.
-	bool			   queryDecodeStatus{false};
+	// Number of pictures to allocate for each GOP to be decoded
+	int				   gopSize;
 
-	bool outOfOrderDecoding{false};
+	// The number of GOPs we are going to test
+	int				   gopCount;
+
+	// Decoding behavioural options
+	int				   options;
 
 	TestDefinition(TestType				type,
 				   const char*			filename,
 				   size_t				filesize,
-				   size_t				numFrames,
 				   VkVideoCoreProfile&& coreProfile,
-				   bool					useQueries = false,
-				   bool					outOfOrder = false)
+				   int					numPicturesinGOP,
+				   int					numGOPs,
+				   int					decodingOptions = Option::Default)
 		: testType(type)
 		, videoClipFilename(filename)
 		, videoClipSizeInBytes(filesize)
-		, framesToCheck(numFrames)
+		, framesToCheck(numPicturesinGOP * numGOPs)
 		, profile(coreProfile)
-		, queryDecodeStatus(useQueries)
-		, outOfOrderDecoding(outOfOrder)
+		, gopSize(numPicturesinGOP)
+		, gopCount(numGOPs)
+		, options(decodingOptions)
 	{
+	}
+
+	bool hasOption(Option o) const
+	{
+		return (options & o) != 0;
 	}
 
 	VideoDevice::VideoDeviceFlags requiredDeviceFlags() const
 	{
 		return VideoDevice::VIDEO_DEVICE_FLAG_REQUIRE_SYNC2_OR_NOT_SUPPORTED |
-			   (queryDecodeStatus ? VideoDevice::VIDEO_DEVICE_FLAG_QUERY_WITH_STATUS_FOR_DECODE_SUPPORT : VideoDevice::VIDEO_DEVICE_FLAG_NONE);
+			   (hasOption(Option::UseStatusQueries) ? VideoDevice::VIDEO_DEVICE_FLAG_QUERY_WITH_STATUS_FOR_DECODE_SUPPORT : VideoDevice::VIDEO_DEVICE_FLAG_NONE);
 	}
 
 	const VkExtensionProperties* extensionProperties() const
@@ -174,110 +197,132 @@ struct TestDefinition
 
 		TCU_THROW(InternalError, "Unsupported codec");
 	};
-} DecodeTestCases[] = {TestDefinition(TEST_TYPE_H264_DECODE_I,
-									  "vulkan/video/clip-a.h264",
-									  2 * 1024 * 1024,
-									  1,
-									  VkVideoCoreProfile(VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR,
-														 VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
-														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
-														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
-														 STD_VIDEO_H264_PROFILE_IDC_HIGH)),
-					   TestDefinition(TEST_TYPE_H264_DECODE_CLIP_A,
-									  "vulkan/video/clip-a.h264",
-									  2 * 1024 * 1024,
-									  30,
-									  VkVideoCoreProfile(VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR,
-														 VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
-														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
-														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
-														 STD_VIDEO_H264_PROFILE_IDC_HIGH)),
-					   TestDefinition(TEST_TYPE_H264_DECODE_QUERY_RESULT_WITH_STATUS,
-									  "vulkan/video/clip-a.h264",
-									  2 * 1024 * 1024,
-									  30,
-									  VkVideoCoreProfile(VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR,
-														 VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
-														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
-														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
-														 STD_VIDEO_H264_PROFILE_IDC_HIGH),
-									  true),
-					   TestDefinition(TEST_TYPE_H264_DECODE_I_P,
-									  "vulkan/video/clip-a.h264",
-									  2 * 1024 * 1024,
-									  2,
-									  VkVideoCoreProfile(VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR,
-														 VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
-														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
-														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
-														 STD_VIDEO_H264_PROFILE_IDC_HIGH)),
-					   TestDefinition(TEST_TYPE_H264_DECODE_I_P_NOT_MATCHING_ORDER,
-									  "vulkan/video/clip-a.h264",
-									  2 * 1024 * 1024,
-									  2,
-									  VkVideoCoreProfile(VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR,
-														 VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
-														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
-														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
-														 STD_VIDEO_H264_PROFILE_IDC_HIGH),
-									  false,
-									  true),
-					   TestDefinition(TEST_TYPE_H264_DECODE_I_P_B_13,
-									  "vulkan/video/jellyfish-250-mbps-4k-uhd-GOB-IPB13.h264",
-									  4 * 1024 * 1024,
-									  26,
-									  VkVideoCoreProfile(VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR,
-														 VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
-														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
-														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
-														 STD_VIDEO_H264_PROFILE_IDC_MAIN)),
-					   TestDefinition(TEST_TYPE_H265_DECODE_I,
-									  "vulkan/video/clip-d.h265",
-									  8 * 1024,
-									  1,
-									  VkVideoCoreProfile(VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR,
-														 VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
-														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
-														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
-														 STD_VIDEO_H265_PROFILE_IDC_MAIN)),
-					   TestDefinition(TEST_TYPE_H265_DECODE_I_P,
-									  "vulkan/video/clip-d.h265",
-									  8 * 1024,
-									  2,
-									  VkVideoCoreProfile(VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR,
-														 VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
-														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
-														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
-														 STD_VIDEO_H265_PROFILE_IDC_MAIN)),
-					   TestDefinition(TEST_TYPE_H265_DECODE_I_P_NOT_MATCHING_ORDER,
-									  "vulkan/video/clip-d.h265",
-									  8 * 1024,
-									  2,
-									  VkVideoCoreProfile(VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR,
-														 VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
-														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
-														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
-														 STD_VIDEO_H265_PROFILE_IDC_MAIN),
-									  false,
-									  true),
-					   TestDefinition(TEST_TYPE_H265_DECODE_CLIP_D,
-									  "vulkan/video/clip-d.h265",
-									  8 * 1024,
-									  30,
-									  VkVideoCoreProfile(VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR,
-														 VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
-														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
-														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
-														 STD_VIDEO_H265_PROFILE_IDC_MAIN)),
-					   TestDefinition(TEST_TYPE_H265_DECODE_I_P_B_13,
-									  "vulkan/video/jellyfish-250-mbps-4k-uhd-GOB-IPB13.h265",
-									  4 * 1024 * 1024,
-									  26,
-									  VkVideoCoreProfile(VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR,
-														 VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
-														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
-														 VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
-														 STD_VIDEO_H265_PROFILE_IDC_MAIN))};
+} DecodeTestCases[] = {
+	TestDefinition(TEST_TYPE_H264_DECODE_I,
+				   "vulkan/video/clip-a.h264",
+				   2 * 1024 * 1024,
+				   VkVideoCoreProfile(VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR,
+									  VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
+									  VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+									  VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+									  STD_VIDEO_H264_PROFILE_IDC_HIGH),
+				   1,
+				   1),
+	TestDefinition(TEST_TYPE_H264_DECODE_CLIP_A,
+				   "vulkan/video/clip-a.h264",
+				   2 * 1024 * 1024,
+				   VkVideoCoreProfile(VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR,
+									  VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
+									  VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+									  VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+									  STD_VIDEO_H264_PROFILE_IDC_HIGH),
+				   10,
+				   3),
+	TestDefinition(TEST_TYPE_H264_DECODE_QUERY_RESULT_WITH_STATUS,
+				   "vulkan/video/clip-a.h264",
+				   2 * 1024 * 1024,
+				   VkVideoCoreProfile(VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR,
+									  VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
+									  VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+									  VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+									  STD_VIDEO_H264_PROFILE_IDC_HIGH),
+				   10,
+				   3,
+				   TestDefinition::Option::UseStatusQueries),
+	TestDefinition(TEST_TYPE_H264_DECODE_I_P,
+				   "vulkan/video/clip-a.h264",
+				   2 * 1024 * 1024,
+				   VkVideoCoreProfile(VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR,
+									  VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
+									  VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+									  VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+									  STD_VIDEO_H264_PROFILE_IDC_HIGH),
+				   2,
+				   1),
+	TestDefinition(TEST_TYPE_H264_DECODE_I_P_NOT_MATCHING_ORDER,
+				   "vulkan/video/clip-a.h264",
+				   2 * 1024 * 1024,
+				   VkVideoCoreProfile(VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR,
+									  VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
+									  VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+									  VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+									  STD_VIDEO_H264_PROFILE_IDC_HIGH),
+				   2,
+				   1,
+				   TestDefinition::Option::CachedDecoding),
+	TestDefinition(TEST_TYPE_H264_DECODE_I_P_B_13,
+				   "vulkan/video/jellyfish-250-mbps-4k-uhd-GOB-IPB13.h264",
+				   4 * 1024 * 1024,
+				   VkVideoCoreProfile(VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR,
+									  VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
+									  VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+									  VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+									  STD_VIDEO_H264_PROFILE_IDC_MAIN),
+				   13,
+				   2),
+	TestDefinition(TEST_TYPE_H265_DECODE_I,
+				   "vulkan/video/clip-d.h265",
+				   8 * 1024,
+				   VkVideoCoreProfile(VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR,
+									  VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
+									  VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+									  VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+									  STD_VIDEO_H265_PROFILE_IDC_MAIN),
+				   1,
+				   1),
+	TestDefinition(TEST_TYPE_H265_DECODE_I_P,
+				   "vulkan/video/clip-d.h265",
+				   8 * 1024,
+				   VkVideoCoreProfile(VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR,
+									  VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
+									  VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+									  VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+									  STD_VIDEO_H265_PROFILE_IDC_MAIN),
+				   2,
+				   1),
+	TestDefinition(TEST_TYPE_H265_DECODE_I_P_NOT_MATCHING_ORDER,
+				   "vulkan/video/clip-d.h265",
+				   8 * 1024,
+				   VkVideoCoreProfile(VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR,
+									  VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
+									  VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+									  VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+									  STD_VIDEO_H265_PROFILE_IDC_MAIN),
+				   2,
+				   1,
+				   TestDefinition::Option::CachedDecoding),
+	TestDefinition(TEST_TYPE_H265_DECODE_CLIP_D,
+				   "vulkan/video/clip-d.h265",
+				   8 * 1024,
+				   VkVideoCoreProfile(VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR,
+									  VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
+									  VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+									  VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+									  STD_VIDEO_H265_PROFILE_IDC_MAIN),
+				   10,
+				   3),
+	TestDefinition(TEST_TYPE_H265_DECODE_I_P_B_13,
+				   "vulkan/video/jellyfish-250-mbps-4k-uhd-GOB-IPB13.h265",
+				   4 * 1024 * 1024,
+				   VkVideoCoreProfile(VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR,
+									  VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
+									  VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+									  VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+									  STD_VIDEO_H265_PROFILE_IDC_MAIN),
+				   13,
+				   2),
+	TestDefinition(TEST_TYPE_H264_DECODE_RESOLUTION_CHANGE,
+				   "vulkan/video/clip-c.h264",
+				   2 * 1024 * 1024,
+				   VkVideoCoreProfile(VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR,
+									  VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
+									  VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+									  VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+									  STD_VIDEO_H264_PROFILE_IDC_HIGH),
+				   15,
+				   2,
+				   TestDefinition::Option::CachedDecoding),
+};
 
 // Vulkan video is not supported on android platform
 // all external libraries, helper functions and test instances has been excluded
@@ -288,7 +333,7 @@ class VideoDecodeTestInstance : public VideoBaseTestInstance
 public:
 	VideoDecodeTestInstance(Context& context, const TestDefinition& testDefinition);
 
-	std::string getTestVideoData(void);
+	std::string		getTestVideoData(void);
 
 	tcu::TestStatus iterate(void);
 
@@ -302,7 +347,7 @@ protected:
 VideoDecodeTestInstance::VideoDecodeTestInstance(Context& context, const TestDefinition& testDefinition)
 	: VideoBaseTestInstance(context), m_testDefinition(testDefinition)
 {
-	VkDevice device = getDeviceSupportingQueue(VK_QUEUE_VIDEO_DECODE_BIT_KHR | VK_QUEUE_TRANSFER_BIT,
+	VkDevice device			= getDeviceSupportingQueue(VK_QUEUE_VIDEO_DECODE_BIT_KHR | VK_QUEUE_TRANSFER_BIT,
 											   m_testDefinition.profile.GetCodecType(),
 											   m_testDefinition.requiredDeviceFlags());
 
@@ -317,17 +362,21 @@ VideoDecodeTestInstance::VideoDecodeTestInstance(Context& context, const TestDef
 		getDeviceQueue(m_context.getDeviceInterface(), device, m_videoDevice.getQueueFamilyIndexDecode(), 0);
 
 	VkSharedBaseObj<VulkanVideoFrameBuffer> vkVideoFrameBuffer;
-	VK_CHECK(VulkanVideoFrameBuffer::Create(&m_deviceContext, m_testDefinition.queryDecodeStatus, vkVideoFrameBuffer));
+	VK_CHECK(VulkanVideoFrameBuffer::Create(&m_deviceContext,
+											m_testDefinition.hasOption(TestDefinition::Option::UseStatusQueries),
+											vkVideoFrameBuffer));
 
 	VideoBaseDecoder::Parameters params;
-	params.profile = &m_testDefinition.profile;
-	params.context = &m_deviceContext;
-	params.framebuffer = vkVideoFrameBuffer;
-	params.framesToCheck = m_testDefinition.framesToCheck;
-	params.queryDecodeStatus = m_testDefinition.queryDecodeStatus;
-	params.outOfOrderDecoding = m_testDefinition.outOfOrderDecoding;
+	params.profile			  = &m_testDefinition.profile;
+	params.context			  = &m_deviceContext;
+	params.framebuffer		  = vkVideoFrameBuffer;
+	params.framesToCheck	  = m_testDefinition.framesToCheck;
+	params.queryDecodeStatus  = m_testDefinition.hasOption(TestDefinition::Option::UseStatusQueries);
+	params.outOfOrderDecoding = m_testDefinition.hasOption(TestDefinition::Option::CachedDecoding);
+	params.gopSize			  = m_testDefinition.gopSize;
+	params.gopCount			  = m_testDefinition.gopCount;
 
-	m_decoder = MovePtr<VideoBaseDecoder>(new VideoBaseDecoder(std::move(params)));
+	m_decoder				  = MovePtr<VideoBaseDecoder>(new VideoBaseDecoder(std::move(params)));
 }
 
 static void createParser(TestDefinition& params, VkParserVideoDecodeClient* decoderClient, VkSharedBaseObj<VulkanVideoDecodeParser>& parser)
@@ -347,25 +396,29 @@ static void createParser(TestDefinition& params, VkParserVideoDecodeClient* deco
 	const VkExtensionProperties* pStdExtensionVersion = params.extensionProperties();
 	DE_ASSERT(pStdExtensionVersion);
 
-	switch(params.profile.GetCodecType())
+	switch (params.profile.GetCodecType())
 	{
 		case VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR:
 		{
-			if (strcmp(pStdExtensionVersion->extensionName, VK_STD_VULKAN_VIDEO_CODEC_H264_DECODE_EXTENSION_NAME) || pStdExtensionVersion->specVersion != VK_STD_VULKAN_VIDEO_CODEC_H264_DECODE_SPEC_VERSION) {
+			if (strcmp(pStdExtensionVersion->extensionName, VK_STD_VULKAN_VIDEO_CODEC_H264_DECODE_EXTENSION_NAME) || pStdExtensionVersion->specVersion != VK_STD_VULKAN_VIDEO_CODEC_H264_DECODE_SPEC_VERSION)
+			{
 				tcu::die("The requested decoder h.264 Codec STD version is NOT supported. The supported decoder h.264 Codec STD version is version %d of %s\n",
-								 VK_STD_VULKAN_VIDEO_CODEC_H264_DECODE_SPEC_VERSION, VK_STD_VULKAN_VIDEO_CODEC_H264_DECODE_EXTENSION_NAME);
+						 VK_STD_VULKAN_VIDEO_CODEC_H264_DECODE_SPEC_VERSION,
+						 VK_STD_VULKAN_VIDEO_CODEC_H264_DECODE_EXTENSION_NAME);
 			}
-			VkSharedBaseObj<VulkanH264Decoder> nvVideoH264DecodeParser( new VulkanH264Decoder(params.profile.GetCodecType()));
+			VkSharedBaseObj<VulkanH264Decoder> nvVideoH264DecodeParser(new VulkanH264Decoder(params.profile.GetCodecType()));
 			parser = nvVideoH264DecodeParser;
 			break;
 		}
 		case VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR:
 		{
-			if (strcmp(pStdExtensionVersion->extensionName, VK_STD_VULKAN_VIDEO_CODEC_H265_DECODE_EXTENSION_NAME) || pStdExtensionVersion->specVersion != VK_STD_VULKAN_VIDEO_CODEC_H265_DECODE_SPEC_VERSION) {
-			tcu::die("The requested decoder h.265 Codec STD version is NOT supported. The supported decoder h.265 Codec STD version is version %d of %s\n",
-					 VK_STD_VULKAN_VIDEO_CODEC_H265_DECODE_SPEC_VERSION, VK_STD_VULKAN_VIDEO_CODEC_H265_DECODE_EXTENSION_NAME);
+			if (strcmp(pStdExtensionVersion->extensionName, VK_STD_VULKAN_VIDEO_CODEC_H265_DECODE_EXTENSION_NAME) || pStdExtensionVersion->specVersion != VK_STD_VULKAN_VIDEO_CODEC_H265_DECODE_SPEC_VERSION)
+			{
+				tcu::die("The requested decoder h.265 Codec STD version is NOT supported. The supported decoder h.265 Codec STD version is version %d of %s\n",
+						 VK_STD_VULKAN_VIDEO_CODEC_H265_DECODE_SPEC_VERSION,
+						 VK_STD_VULKAN_VIDEO_CODEC_H265_DECODE_EXTENSION_NAME);
 			}
-			VkSharedBaseObj<VulkanH265Decoder> nvVideoH265DecodeParser( new VulkanH265Decoder(params.profile.GetCodecType()));
+			VkSharedBaseObj<VulkanH265Decoder> nvVideoH265DecodeParser(new VulkanH265Decoder(params.profile.GetCodecType()));
 			parser = nvVideoH265DecodeParser;
 			break;
 		}
@@ -381,8 +434,8 @@ static std::vector<deUint8> semiplanarToYV12(const ycbcr::MultiPlaneImageData& m
 	DE_ASSERT(multiPlaneImageData.getFormat() == VK_FORMAT_G8_B8R8_2PLANE_420_UNORM);
 
 	std::vector<deUint8> YV12Buffer;
-	size_t plane0Size = multiPlaneImageData.getPlaneSize(0);
-	size_t plane1Size = multiPlaneImageData.getPlaneSize(1);
+	size_t				 plane0Size = multiPlaneImageData.getPlaneSize(0);
+	size_t				 plane1Size = multiPlaneImageData.getPlaneSize(1);
 
 	YV12Buffer.resize(plane0Size + plane1Size);
 
@@ -390,11 +443,11 @@ static std::vector<deUint8> semiplanarToYV12(const ycbcr::MultiPlaneImageData& m
 	deMemcpy(YV12Buffer.data(), multiPlaneImageData.getPlanePtr(0), plane0Size);
 
 	// Deinterleave the Cr and Cb plane.
-	uint16_t *plane2 = (uint16_t*)multiPlaneImageData.getPlanePtr(1);
-	std::vector<deUint8>::size_type idx = plane0Size;
-	for (unsigned i = 0 ; i < plane1Size / 2; i ++)
+	uint16_t*						plane2 = (uint16_t*)multiPlaneImageData.getPlanePtr(1);
+	std::vector<deUint8>::size_type idx	   = plane0Size;
+	for (unsigned i = 0; i < plane1Size / 2; i++)
 		YV12Buffer[idx++] = static_cast<deUint8>(plane2[i] & 0xFF);
-	for (unsigned i = 0 ; i < plane1Size / 2; i ++)
+	for (unsigned i = 0; i < plane1Size / 2; i++)
 		YV12Buffer[idx++] = static_cast<deUint8>((plane2[i] >> 8) & 0xFF);
 
 	return YV12Buffer;
@@ -523,22 +576,25 @@ tcu::TestStatus VideoDecodeTestInstance::iterate(void)
 	std::vector<int> incorrectFrames;
 	std::vector<int> correctFrames;
 
-	if (m_testDefinition.outOfOrderDecoding)
+	if (m_testDefinition.hasOption(TestDefinition::Option::CachedDecoding))
 	{
 		// This loop is for the out-of-order submissions cases. First all the frame information is gathered from the parser<->decoder loop
 		// then the command buffers are recorded in a random order, as well as the queue submissions, depending on the configuration of
 		// the test.
 		// NOTE: For this sequence to work, the frame buffer must have enough decode surfaces for the GOP intended for decode, otherwise
 		// picture allocation will fail pretty quickly! See m_numDecodeSurfaces. m_maxDecodeFramesCount
-		do
+		for (int gop = 0; gop < m_testDefinition.gopCount; gop++)
 		{
-			videoStreamHasEnded = processNextChunk();
-			int decodedFrames	= m_decoder->GetVideoFrameBuffer()->GetDisplayedFrameCount();
-			if (decodedFrames == m_testDefinition.framesToCheck)
-			break;
+			do
+			{
+					videoStreamHasEnded = processNextChunk();
+				int decodedFrames	= m_decoder->GetVideoFrameBuffer()->GetDisplayedFrameCount();
+				if (decodedFrames == m_testDefinition.gopSize)
+					break;
+			}
+			while (!videoStreamHasEnded);
 		}
-		while (!videoStreamHasEnded);
-		DE_ASSERT(m_decoder->m_cachedDecodeParams.size() == m_testDefinition.framesToCheck);
+		DE_ASSERT(m_decoder->m_cachedDecodeParams.size() == m_testDefinition.gopSize);
 		m_decoder->DecodeCachedPictures();
 	}
 	do
@@ -566,15 +622,19 @@ tcu::TestStatus VideoDecodeTestInstance::iterate(void)
 			auto bytes = semiplanarToYV12(*resultImage);
 			fwrite(bytes.data(), 1, bytes.size(), output);
 #endif
-			if (checksumFrame(*resultImage, frameReferenceChecksum(m_testDefinition.testType, frameNumber))) {
+			if (checksumFrame(*resultImage, frameReferenceChecksum(m_testDefinition.testType, frameNumber)))
+			{
 				framesCorrect++;
 				correctFrames.push_back(frameNumber);
-			} else {
+			}
+			else
+			{
 				incorrectFrames.push_back(frameNumber);
 			}
 			frameNumber++;
-			if (frameNumber == m_testDefinition.framesToCheck) {
-				framesRemaining = 0;
+			if (frameNumber == m_testDefinition.framesToCheck)
+			{
+				framesRemaining		= 0;
 				videoStreamHasEnded = true;
 			}
 		}
@@ -586,15 +646,21 @@ tcu::TestStatus VideoDecodeTestInstance::iterate(void)
 #endif
 	if (framesCorrect > 0 && framesCorrect == frameNumber)
 		return tcu::TestStatus::pass(de::toString(framesCorrect) + " correctly decoded frames");
-	else {
+	else
+	{
 		stringstream ss;
 		ss << framesCorrect << " out of " << frameNumber << " frames rendered correctly (";
-		if (correctFrames.size() < incorrectFrames.size()) {
+		if (correctFrames.size() < incorrectFrames.size())
+		{
 			ss << "correct frames: ";
-			for (int i : correctFrames) ss << i << " ";
-		} else {
+			for (int i : correctFrames)
+				ss << i << " ";
+		}
+		else
+		{
 			ss << "incorrect frames: ";
-			for (int i : incorrectFrames) ss << i << " ";
+			for (int i : incorrectFrames)
+				ss << i << " ";
 		}
 		ss << ")";
 		return tcu::TestStatus::fail(ss.str());
@@ -618,7 +684,7 @@ private:
 	TestDefinition m_testDefinition;
 };
 
-void VideoDecodeTestCase::checkSupport (Context& context) const
+void VideoDecodeTestCase::checkSupport(Context& context) const
 {
 	context.requireDeviceFunctionality("VK_KHR_video_queue");
 	context.requireDeviceFunctionality("VK_KHR_synchronization2");
@@ -661,7 +727,7 @@ void VideoDecodeTestCase::checkSupport (Context& context) const
 	}
 }
 
-TestInstance* VideoDecodeTestCase::createInstance (Context& context) const
+TestInstance* VideoDecodeTestCase::createInstance(Context& context) const
 {
 	switch (m_testDefinition.testType)
 	{
@@ -699,39 +765,57 @@ TestInstance* VideoDecodeTestCase::createInstance (Context& context) const
 #ifndef DE_BUILD_VIDEO
 	DE_UNREF(context);
 #endif
-
 }
 
-const char* getTestName (const TestType testType)
+const char* getTestName(const TestType testType)
 {
 	switch (testType)
 	{
-		case TEST_TYPE_H264_DECODE_I:							return "h264_i";
-		case TEST_TYPE_H264_DECODE_I_P:							return "h264_i_p";
-		case TEST_TYPE_H264_DECODE_CLIP_A:						return "h264_clip_a";
-		case TEST_TYPE_H264_DECODE_I_P_NOT_MATCHING_ORDER:		return "h264_i_p_not_matching_order";
-		case TEST_TYPE_H264_DECODE_I_P_B_13:					return "h264_i_p_b_13";
-		case TEST_TYPE_H264_DECODE_I_P_B_13_NOT_MATCHING_ORDER:	return "h264_i_p_b_13_not_matching_order";
-		case TEST_TYPE_H264_DECODE_QUERY_RESULT_WITH_STATUS:	return "h264_query_with_status";
-		case TEST_TYPE_H264_DECODE_RESOLUTION_CHANGE:			return "h264_resolution_change";
-		case TEST_TYPE_H264_DECODE_RESOLUTION_CHANGE_DPB:		return "h264_resolution_change_dpb";
-		case TEST_TYPE_H264_DECODE_INTERLEAVED:					return "h264_interleaved";
-		case TEST_TYPE_H264_BOTH_DECODE_ENCODE_INTERLEAVED:		return "h264_decode_encode_interleaved";
-		case TEST_TYPE_H264_H265_DECODE_INTERLEAVED:			return "h264_h265_interleaved";
-		case TEST_TYPE_H265_DECODE_I:							return "h265_i";
-		case TEST_TYPE_H265_DECODE_I_P:							return "h265_i_p";
-		case TEST_TYPE_H265_DECODE_CLIP_D:						return "h265_clip_d";
-		case TEST_TYPE_H265_DECODE_I_P_NOT_MATCHING_ORDER:		return "h265_i_p_not_matching_order";
-		case TEST_TYPE_H265_DECODE_I_P_B_13:					return "h265_i_p_b_13";
-		case TEST_TYPE_H265_DECODE_I_P_B_13_NOT_MATCHING_ORDER:	return "h265_i_p_b_13_not_matching_order";
-		default:												TCU_THROW(InternalError, "Unknown TestType");
+		case TEST_TYPE_H264_DECODE_I:
+			return "h264_i";
+		case TEST_TYPE_H264_DECODE_I_P:
+			return "h264_i_p";
+		case TEST_TYPE_H264_DECODE_CLIP_A:
+			return "h264_clip_a";
+		case TEST_TYPE_H264_DECODE_I_P_NOT_MATCHING_ORDER:
+			return "h264_i_p_not_matching_order";
+		case TEST_TYPE_H264_DECODE_I_P_B_13:
+			return "h264_i_p_b_13";
+		case TEST_TYPE_H264_DECODE_I_P_B_13_NOT_MATCHING_ORDER:
+			return "h264_i_p_b_13_not_matching_order";
+		case TEST_TYPE_H264_DECODE_QUERY_RESULT_WITH_STATUS:
+			return "h264_query_with_status";
+		case TEST_TYPE_H264_DECODE_RESOLUTION_CHANGE:
+			return "h264_resolution_change";
+		case TEST_TYPE_H264_DECODE_RESOLUTION_CHANGE_DPB:
+			return "h264_resolution_change_dpb";
+		case TEST_TYPE_H264_DECODE_INTERLEAVED:
+			return "h264_interleaved";
+		case TEST_TYPE_H264_BOTH_DECODE_ENCODE_INTERLEAVED:
+			return "h264_decode_encode_interleaved";
+		case TEST_TYPE_H264_H265_DECODE_INTERLEAVED:
+			return "h264_h265_interleaved";
+		case TEST_TYPE_H265_DECODE_I:
+			return "h265_i";
+		case TEST_TYPE_H265_DECODE_I_P:
+			return "h265_i_p";
+		case TEST_TYPE_H265_DECODE_CLIP_D:
+			return "h265_clip_d";
+		case TEST_TYPE_H265_DECODE_I_P_NOT_MATCHING_ORDER:
+			return "h265_i_p_not_matching_order";
+		case TEST_TYPE_H265_DECODE_I_P_B_13:
+			return "h265_i_p_b_13";
+		case TEST_TYPE_H265_DECODE_I_P_B_13_NOT_MATCHING_ORDER:
+			return "h265_i_p_b_13_not_matching_order";
+		default:
+			TCU_THROW(InternalError, "Unknown TestType");
 	}
 }
-}	// anonymous
+} // namespace
 
-tcu::TestCaseGroup*	createVideoDecodeTests (tcu::TestContext& testCtx)
+tcu::TestCaseGroup* createVideoDecodeTests(tcu::TestContext& testCtx)
 {
-	MovePtr<tcu::TestCaseGroup>	group	(new tcu::TestCaseGroup(testCtx, "decode", "Video decoding session tests"));
+	MovePtr<tcu::TestCaseGroup> group(new tcu::TestCaseGroup(testCtx, "decode", "Video decoding session tests"));
 
 	for (const auto& tc : DecodeTestCases)
 	{
@@ -741,5 +825,5 @@ tcu::TestCaseGroup*	createVideoDecodeTests (tcu::TestContext& testCtx)
 	return group.release();
 }
 
-}	// video
-}	// vkt
+} // namespace video
+} // namespace vkt
