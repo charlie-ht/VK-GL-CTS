@@ -629,7 +629,7 @@ int32_t VideoBaseDecoder::StartVideoSequence (const VkParserDetectedVideoFormat*
 			  << "\tBit depth    : " << pVideoFormat->bit_depth_luma_minus8 + 8 << std::endl;
 
 	// This should be sized to the size of the GOP to decode
-	m_numDecodeSurfaces = std::max(m_numDecodeSurfaces, 32u);
+	m_numDecodeSurfaces = std::max(m_numDecodeSurfaces, 32u); // gop size
 	VkResult result = VK_SUCCESS;
 
 	if (videoLoggingEnabled()) {
@@ -683,7 +683,7 @@ int32_t VideoBaseDecoder::StartVideoSequence (const VkParserDetectedVideoFormat*
 									  imageExtent,
 									  m_dpbImageFormat,
 									  maxDpbSlotCount,
-									  std::max<uint32_t>(maxDpbSlotCount, VkParserPerFrameDecodeParameters::MAX_DPB_REF_SLOTS)))
+									  maxDpbSlotCount))
 	{
 
 		VK_CHECK(VulkanVideoSession::Create(*m_deviceContext,

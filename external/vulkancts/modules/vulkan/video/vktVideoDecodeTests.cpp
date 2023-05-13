@@ -260,6 +260,17 @@ struct TestDefinition
 									  STD_VIDEO_H264_PROFILE_IDC_MAIN),
 				   13,
 				   2),
+	TestDefinition(TEST_TYPE_H264_DECODE_I_P_B_13_NOT_MATCHING_ORDER,
+				   "vulkan/video/jellyfish-250-mbps-4k-uhd-GOB-IPB13.h264",
+				   4 * 1024 * 1024,
+				   VkVideoCoreProfile(VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR,
+									  VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
+									  VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+									  VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+									  STD_VIDEO_H264_PROFILE_IDC_MAIN),
+				   13,
+				   2,
+				   TestDefinition::Option::CachedDecoding),
 	TestDefinition(TEST_TYPE_H265_DECODE_I,
 				   "vulkan/video/clip-d.h265",
 				   8 * 1024,
@@ -311,6 +322,17 @@ struct TestDefinition
 									  STD_VIDEO_H265_PROFILE_IDC_MAIN),
 				   13,
 				   2),
+	TestDefinition(TEST_TYPE_H265_DECODE_I_P_B_13_NOT_MATCHING_ORDER,
+				   "vulkan/video/jellyfish-250-mbps-4k-uhd-GOB-IPB13.h265",
+				   4 * 1024 * 1024,
+				   VkVideoCoreProfile(VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR,
+									  VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
+									  VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+									  VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+									  STD_VIDEO_H265_PROFILE_IDC_MAIN),
+				   13,
+				   2,
+				   TestDefinition::Option::CachedDecoding),
 	TestDefinition(TEST_TYPE_H264_DECODE_RESOLUTION_CHANGE,
 				   "vulkan/video/clip-c.h264",
 				   2 * 1024 * 1024,
@@ -582,19 +604,17 @@ tcu::TestStatus VideoDecodeTestInstance::iterate(void)
 		// then the command buffers are recorded in a random order, as well as the queue submissions, depending on the configuration of
 		// the test.
 		// NOTE: For this sequence to work, the frame buffer must have enough decode surfaces for the GOP intended for decode, otherwise
-		// picture allocation will fail pretty quickly! See m_numDecodeSurfaces. m_maxDecodeFramesCount
-		for (int gop = 0; gop < m_testDefinition.gopCount; gop++)
+		// picture allocation will fail pretty quickly! See m_numDecodeSurfaces, m_maxDecodeFramesCount
+		// The previous CTS cases were not actually randomizing the queue submission order (despite claiming too!)
+		do
 		{
-			do
-			{
-					videoStreamHasEnded = processNextChunk();
-				int decodedFrames	= m_decoder->GetVideoFrameBuffer()->GetDisplayedFrameCount();
-				if (decodedFrames == m_testDefinition.gopSize)
-					break;
-			}
-			while (!videoStreamHasEnded);
+			videoStreamHasEnded = processNextChunk();
+			int decodedFrames	= m_decoder->GetVideoFrameBuffer()->GetDisplayedFrameCount();
+			if (decodedFrames == m_testDefinition.framesToCheck)
+				break;
 		}
-		DE_ASSERT(m_decoder->m_cachedDecodeParams.size() == m_testDefinition.gopSize);
+		while (!videoStreamHasEnded);
+		DE_ASSERT(m_decoder->m_cachedDecodeParams.size() == m_testDefinition.framesToCheck);
 		m_decoder->DecodeCachedPictures();
 	}
 	do
