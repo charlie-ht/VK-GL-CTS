@@ -571,7 +571,7 @@ VideoBaseDecoder::VideoBaseDecoder(Parameters&& params)
 	, m_decodeFramesData(params.context->getDeviceDriver(), params.context->device, params.context->decodeQueueFamilyIdx())
 	, m_queryResultWithStatus(params.queryDecodeStatus)
 	, m_outOfOrderDecoding(params.outOfOrderDecoding)
-
+	, m_alwaysRecreateDPB(params.alwaysRecreateDPB)
 {
 	std::fill(m_pictureToDpbSlotMap.begin(), m_pictureToDpbSlotMap.end(), -1);
 
@@ -675,15 +675,17 @@ int32_t VideoBaseDecoder::StartVideoSequence (const VkParserDetectedVideoFormat*
 	imageExtent.width = deAlign32(imageExtent.width,  m_videoCaps.pictureAccessGranularity.width);
 	imageExtent.height = deAlign32(imageExtent.height,  m_videoCaps.pictureAccessGranularity.height);
 
+	tcu::print("recreate DPB? %s\n", m_alwaysRecreateDPB ? "true": "false");
 	if (!m_videoSession ||
-		!m_videoSession->IsCompatible(m_deviceContext->device,
+		(!m_videoSession->IsCompatible(m_deviceContext->device,
 									  m_deviceContext->decodeQueueFamilyIdx(),
 									  &videoProfile,
 									  m_outImageFormat,
 									  imageExtent,
 									  m_dpbImageFormat,
 									  maxDpbSlotCount,
-									  maxDpbSlotCount))
+									  maxDpbSlotCount)
+		  || m_alwaysRecreateDPB))
 	{
 
 		VK_CHECK(VulkanVideoSession::Create(*m_deviceContext,

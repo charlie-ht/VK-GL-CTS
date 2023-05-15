@@ -1135,6 +1135,7 @@ public:
 		size_t									framesToCheck{};
 		bool									queryDecodeStatus{};
 		bool									outOfOrderDecoding{};
+		bool									alwaysRecreateDPB{};
 		VkSharedBaseObj<VulkanVideoFrameBuffer> framebuffer;
 	};
 	VideoBaseDecoder(Parameters&& params);
@@ -1268,6 +1269,7 @@ public:
 	bool														m_queryResultWithStatus{false};
 
 	bool														m_outOfOrderDecoding{false};
+	bool														m_alwaysRecreateDPB{false};
 	vector<VkParserPerFrameDecodeParameters*>					m_pPerFrameDecodeParameters;
 	vector<VkParserDecodePictureInfo*>							m_pVulkanParserDecodePictureInfo;
 	vector<NvVkDecodeFrameData*>								m_pFrameDatas;

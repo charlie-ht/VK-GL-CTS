@@ -115,7 +115,7 @@ static const std::string& frameReferenceChecksum(TestType test, int frameNumber)
 
 struct TestDefinition
 {
-	enum Option
+	enum Option : uint32_t
 	{
 		// The default is to do nothing additional to ordinary playback.
 		Default			 = 0,
@@ -123,7 +123,11 @@ struct TestDefinition
 		UseStatusQueries = 1 << 0,
 		// Do not playback the clip in the "normal fashion", instead cached decode parameters for later process
 		// this is primarily used to support out-of-order submission test cases, and per-GOP handling.
-		CachedDecoding	 = 1 << 1
+		CachedDecoding	 = 1 << 1,
+		// When a parameter object changes the resolution of the test content, and the new video session would otherwise
+		// still be compatible with the last session (for example, larger decode surfaces preceeding smaller decode surfaces,
+		// a frame downsize), force the session to be recreated anyway.
+		RecreateDPBImages = 1 << 2,
 	};
 
 	TestType		   testType;
@@ -344,6 +348,17 @@ struct TestDefinition
 				   15,
 				   2,
 				   TestDefinition::Option::CachedDecoding),
+	TestDefinition(TEST_TYPE_H264_DECODE_RESOLUTION_CHANGE_DPB,
+				   "vulkan/video/clip-c.h264",
+				   2 * 1024 * 1024,
+				   VkVideoCoreProfile(VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR,
+									  VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
+									  VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+									  VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+									  STD_VIDEO_H264_PROFILE_IDC_HIGH),
+				   15,
+				   2,
+				   TestDefinition::Option::CachedDecoding | TestDefinition::Option::RecreateDPBImages),
 };
 
 // Vulkan video is not supported on android platform
@@ -392,11 +407,14 @@ VideoDecodeTestInstance::VideoDecodeTestInstance(Context& context, const TestDef
 	params.profile			  = &m_testDefinition.profile;
 	params.context			  = &m_deviceContext;
 	params.framebuffer		  = vkVideoFrameBuffer;
-	params.framesToCheck	  = m_testDefinition.framesToCheck;
-	params.queryDecodeStatus  = m_testDefinition.hasOption(TestDefinition::Option::UseStatusQueries);
-	params.outOfOrderDecoding = m_testDefinition.hasOption(TestDefinition::Option::CachedDecoding);
+
 	params.gopSize			  = m_testDefinition.gopSize;
 	params.gopCount			  = m_testDefinition.gopCount;
+	params.framesToCheck	  = m_testDefinition.framesToCheck;
+
+	params.queryDecodeStatus  = m_testDefinition.hasOption(TestDefinition::Option::UseStatusQueries);
+	params.outOfOrderDecoding = m_testDefinition.hasOption(TestDefinition::Option::CachedDecoding);
+	params.alwaysRecreateDPB  = m_testDefinition.hasOption(TestDefinition::Option::RecreateDPBImages);
 
 	m_decoder				  = MovePtr<VideoBaseDecoder>(new VideoBaseDecoder(std::move(params)));
 }
