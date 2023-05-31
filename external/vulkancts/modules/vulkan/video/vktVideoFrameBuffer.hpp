@@ -51,9 +51,9 @@ using ImagePtr =de::MovePtr<ImageWithMemory>;
 class VkImageResource : public VkVideoRefCountBase
 {
 public:
-	static VkResult Create(DeviceContext&					 vkDevCtx,
-						   const VkImageCreateInfo*			 pImageCreateInfo,
-						   VkSharedBaseObj<VkImageResource>& imageResource);
+	static VkResult Create(DeviceContext &vkDevCtx,
+						   const VkImageCreateInfo *pImageCreateInfo,
+						   VkSharedBaseObj<VkImageResource> &imageResource);
 
 	int32_t AddRef() override
 	{
@@ -74,6 +74,11 @@ public:
 	VkImage GetImage() const
 	{
 		return m_imageWithMemory->get();
+	}
+
+	VkDeviceMemory GetImageMemory()
+	{
+		return m_imageWithMemory->getAllocation().getMemory();
 	}
 
 	const VkImageCreateInfo& GetImageCreateInfo() const

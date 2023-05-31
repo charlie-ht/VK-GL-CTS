@@ -62,7 +62,7 @@ namespace video
 // Set this to 1 to have the decoded YCbCr frames written to the
 // filesystem in the YV12 format.
 // Check the relevant sections to change the file name and so on...
-#define FRAME_DUMP_DEBUG 1
+#define FRAME_DUMP_DEBUG 0
 
 namespace
 {
@@ -92,6 +92,8 @@ enum TestType
 	TEST_TYPE_H265_DECODE_I_P_NOT_MATCHING_ORDER, // Case 16-2
 	TEST_TYPE_H265_DECODE_I_P_B_13, // Case 16-3
 	TEST_TYPE_H265_DECODE_I_P_B_13_NOT_MATCHING_ORDER, // Case 16-4
+
+	TEST_TYPE_H265_DECODE_420_MAIN10_I_P, //
 
 	TEST_TYPE_LAST
 };
@@ -152,6 +154,9 @@ const char* getTestName(TestType type)
 		case TEST_TYPE_H265_DECODE_I_P_B_13_NOT_MATCHING_ORDER:
 			testName = "h265_i_p_b_13_not_matching_order";
 			break;
+		case TEST_TYPE_H265_DECODE_420_MAIN10_I_P:
+			testName = "h265_420_main10_i_p";
+			break;
 		default:
 			TCU_THROW(InternalError, "Unknown TestType");
 	}
@@ -204,6 +209,7 @@ struct DecodeTestParam
 	{TEST_TYPE_H265_DECODE_I_P_B_13, {CLIP_JELLY_HEVC, ALL_FRAMES, DecoderOption::Default}},
 	{TEST_TYPE_H265_DECODE_I_P_B_13_NOT_MATCHING_ORDER, {CLIP_JELLY_HEVC, ALL_FRAMES, DecoderOption::CachedDecoding}},
 	{TEST_TYPE_H265_DECODE_CLIP_D, {CLIP_D, ALL_FRAMES, DecoderOption::Default}},
+	{TEST_TYPE_H265_DECODE_420_MAIN10_I_P, {CLIP_WP_A_MAIN10_TOSHIBA_HEVC, ALL_FRAMES, DecoderOption::Default}},
 };
 
 struct InterleavingDecodeTestParams
@@ -785,8 +791,16 @@ tcu::TestStatus VideoDecodeTestInstance::iterate()
 		auto bytes = semiplanarToYV12(*resultImage);
 		fwrite(bytes.data(), 1, bytes.size(), output);
 #endif
-		std::string checksum = checksumForClipFrame(m_testDefinition->getClipInfo(), frameNumber);
-		if (imageMatchesReferenceChecksum(*resultImage, checksum))
+		bool allPlanesPassed = true;
+		int planesToCheck = m_testDefinition->getTestType() == TEST_TYPE_H265_DECODE_420_MAIN10_I_P ? resultImage->getDescription().numPlanes : 1;
+		for (int planeIdx = 0; planeIdx < planesToCheck; planeIdx++)
+		{
+			std::string checksum = checksumForClipFrame(m_testDefinition->getClipInfo(), frameNumber, planeIdx);
+			allPlanesPassed &= imageMatchesReferenceChecksum(*resultImage, checksum, planeIdx);
+			if (!allPlanesPassed)
+				break;
+		}
+		if (allPlanesPassed)
 		{
 			correctFrames.push_back(frameNumber);
 		}
@@ -909,8 +923,8 @@ tcu::TestStatus InterleavingDecodeTestInstance::iterate(void)
 			auto bytes = semiplanarToYV12(*resultImage);
 			fwrite(bytes.data(), 1, bytes.size(), output);
 #endif
-			auto				checksum	= checksumForClipFrame(test->getClipInfo(), frameNumber);
-			if (imageMatchesReferenceChecksum(*resultImage, checksum))
+			auto				checksum	= checksumForClipFrame(test->getClipInfo(), frameNumber, 0);
+			if (imageMatchesReferenceChecksum(*resultImage, checksum, 0))
 			{
 				results[i].correctFrames.push_back(frameNumber);
 			}
@@ -1033,6 +1047,7 @@ void VideoDecodeTestCase::checkSupport(Context& context) const
 		case TEST_TYPE_H265_DECODE_I_P_NOT_MATCHING_ORDER:
 		case TEST_TYPE_H265_DECODE_I_P_B_13:
 		case TEST_TYPE_H265_DECODE_I_P_B_13_NOT_MATCHING_ORDER:
+		case TEST_TYPE_H265_DECODE_420_MAIN10_I_P:
 		{
 			context.requireDeviceFunctionality("VK_KHR_video_decode_h265");
 			break;

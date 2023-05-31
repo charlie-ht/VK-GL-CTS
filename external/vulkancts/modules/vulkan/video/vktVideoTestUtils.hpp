@@ -47,7 +47,7 @@ typedef de::MovePtr<Allocation> AllocationPtr;
 
 bool videoLoggingEnabled();
 
-bool												imageMatchesReferenceChecksum(const ycbcr::MultiPlaneImageData& multiPlaneImageData, const std::string& referenceChecksums);
+bool												imageMatchesReferenceChecksum(const ycbcr::MultiPlaneImageData& multiPlaneImageData, const std::string& referenceChecksums, int planeNumber);
 
 VkVideoDecodeH264ProfileInfoKHR						getProfileOperationH264Decode			(StdVideoH264ProfileIdc						stdProfileIdc				= STD_VIDEO_H264_PROFILE_IDC_MAIN,
 																							 VkVideoDecodeH264PictureLayoutFlagBitsKHR	pictureLayout				= VK_VIDEO_DECODE_H264_PICTURE_LAYOUT_INTERLACED_INTERLEAVED_LINES_BIT_KHR);
@@ -867,9 +867,7 @@ VkVideoCodecOperationFlagsKHR getSupportedCodecs(DeviceContext&				   devCtx,
 VkResult					  getVideoFormats(DeviceContext&			devCtx,
 											  const VkVideoCoreProfile& videoProfile,
 											  VkImageUsageFlags			imageUsage,
-											  deUint32&					formatCount,
-											  VkFormat*					formats,
-											  bool						dumpData = false);
+											  std::vector<VkFormat>&	formats);
 
 VkResult					  getSupportedVideoFormats(DeviceContext&				   devCtx,
 													   const VkVideoCoreProfile&	   videoProfile,

@@ -195,76 +195,140 @@ static const char* jellyfishHEVC[26] =
 		"87be085bd498c3f97e9bc55beed79683",
 };
 
-static auto		H264_420_8BIT_HIGH_PROFILE = VideoProfileInfo{VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR,
-														  VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
-														  VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
-														  VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
-														  STD_VIDEO_H264_PROFILE_IDC_HIGH};
-static auto		H264_420_8BIT_MAIN_PROFILE = VideoProfileInfo{VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR,
-														  VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
-														  VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
-														  VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
-														  STD_VIDEO_H264_PROFILE_IDC_MAIN};
-static auto		H265_420_8BIT_MAIN_PROFILE = VideoProfileInfo{VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR,
-														  VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
-														  VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
-														  VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
-														  STD_VIDEO_H265_PROFILE_IDC_MAIN};
+static const char *main10ToshibaHEVCLuma[20] =
+{
+	"eacc9f0d641e25887342c7cd751e8b6d",
+	"308c76389a1a51df85222a40460f2d40",
+	"9a37ac685519e8b7ffa188c417561ce6",
+	"aadf8f6e0cc842c3fde19ac474dfb55b",
+	"9bfc8e0801720d5185bf71556ff41e28",
+	"3166e870f805c11163a38340be960d9b",
+	"ea1bc6fe6c968162e9d76a8bafefee8c",
+	"a52ca790c8e884f03a83cbfc044b3682",
+	"c298ecbc6034adb4df871ed7d851861a",
+	"f88dd69f092ea5a08d18f286fd6d1dfd",
+	"facc91ceb3914142c9cd015dde01ae0f",
+	"e095508887de6d074ca2fd3060ff7645",
+	"68dafbe27d822dd23c0046f622a37b57",
+	"94beb09d63b88af10ff86085c323b592",
+	"a55ab47cd825d545204a0c979a448617",
+	"f71aca51c56e4f6d1e7321d2fce94c41",
+	"a648a48001c77dac91f983821ba584e0",
+	"6abef7bd3540fafbca3c076c95910fc0",
+	"da7f566cef7bf7fe0ead917f167f35d5",
+	"fe1a0ce8ad7df0ea1965ff6eb5600123",
+};
+
+static const char *main10ToshibaHEVCChroma[20] =
+{
+	"0c5403e1ab20d24c0bf4ef4b61a34b06",
+	"200917687e9a4e6d7d99b1d09d55f97d",
+	"f4c5574328d4a5ce00f7d34b653d377a",
+	"b13f83fa0c82ef46fb51b4f6bdf91b3c",
+	"a121f45cc49d939bf596194a0fdd8b4f",
+	"2bf2498dd7acf3053bbcd5fc4c397ea6",
+	"4e9f7ffa80e28bc64c73f6cdde758eb8",
+	"b79dc1ed187ea5df507728d43fa5cd85",
+	"5eb1db30c318aa98c7ba5aafa24e07f5",
+	"71e0a01e90f4073233d48627bb7c70ba",
+	"d5065e823314c7b2083afd12a53b9ece",
+	"320b936b661165121a8964b85f379ef1",
+	"4ce8b3b7cfd182f72f017d56bea8eb8a",
+	"f0902a15e66dc601549f615b3e8184be",
+	"80312ac213862dbd89e12658ea824258",
+	"d982c78b0d234a7cbf1c63d8be89aa64",
+	"8ecd3520b97b902c21a5d5bc251d6ece",
+	"d799734dcd9a68a3d608f66b8e6cb5d8",
+	"4aa2a2c043572bf050ae97461b0e7034",
+	"f2f733af37c8c01ebe5ab59a5db4d04d",
+};
+
+static auto H264_420_8BIT_HIGH_PROFILE = VideoProfileInfo{
+	VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR, VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
+	VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR, VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR, STD_VIDEO_H264_PROFILE_IDC_HIGH};
+static auto H264_420_8BIT_MAIN_PROFILE = VideoProfileInfo{
+	VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR, VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
+	VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR, VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR, STD_VIDEO_H264_PROFILE_IDC_MAIN};
+static auto H265_420_8BIT_MAIN_PROFILE = VideoProfileInfo{
+	VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR, VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
+	VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR, VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR, STD_VIDEO_H265_PROFILE_IDC_MAIN};
+static auto H265_420_10BIT_MAIN_PROFILE =
+	VideoProfileInfo{VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR, VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
+					 VK_VIDEO_COMPONENT_BIT_DEPTH_10_BIT_KHR, VK_VIDEO_COMPONENT_BIT_DEPTH_10_BIT_KHR,
+					 STD_VIDEO_H265_PROFILE_IDC_MAIN_10};
 
 static ClipInfo Clips[] = {
 	{
 		CLIP_A,
 		"vulkan/video/clip-a.h264",
-		   H264_420_8BIT_HIGH_PROFILE,
+		H264_420_8BIT_HIGH_PROFILE,
 		30,
 		10,
 		3,
 		clipA,
+		nullptr,
+		nullptr,
 	},
 	{
 		CLIP_B,
 		"vulkan/video/clip-b.h264",
-		   H264_420_8BIT_HIGH_PROFILE,
+		H264_420_8BIT_HIGH_PROFILE,
 		30,
 		10,
 		3,
 		clipB,
+		nullptr,
+		nullptr,
 	},
 	{
 		CLIP_C,
 		"vulkan/video/clip-c.h264",
-		   H264_420_8BIT_HIGH_PROFILE,
+		H264_420_8BIT_HIGH_PROFILE,
 		30,
 		10,
 		3,
 		clipC,
+		nullptr,
+		nullptr,
 	},
 	{
-		CLIP_D,
-		"vulkan/video/clip-d.h265",
-		   H265_420_8BIT_MAIN_PROFILE,
-		30,
-		10,
-		3,
+		CLIP_D, "vulkan/video/clip-d.h265", H265_420_8BIT_MAIN_PROFILE, 30, 10, 3,
 		clipA, // same as clip A
+		nullptr,
+		nullptr,
 	},
 	{
 		CLIP_JELLY_AVC,
 		"vulkan/video/jellyfish-250-mbps-4k-uhd-GOB-IPB13.h264",
-		   H264_420_8BIT_MAIN_PROFILE,
+		H264_420_8BIT_MAIN_PROFILE,
 		26,
 		26,
 		1,
 		jellyfishAVC,
+		nullptr,
+		nullptr,
 	},
 	{
 		CLIP_JELLY_HEVC,
 		"vulkan/video/jellyfish-250-mbps-4k-uhd-GOB-IPB13.h265",
-		   H265_420_8BIT_MAIN_PROFILE,
+		H265_420_8BIT_MAIN_PROFILE,
 		26,
 		26,
 		1,
 		jellyfishHEVC,
+		nullptr,
+		nullptr,
+	},
+	{
+		CLIP_WP_A_MAIN10_TOSHIBA_HEVC,
+		"vulkan/video/WP_A_MAIN10_Toshiba_3.h265",
+		H265_420_10BIT_MAIN_PROFILE,
+		20,
+		20,
+		1,
+		main10ToshibaHEVCLuma, // TODO: For now only check the luma
+		main10ToshibaHEVCChroma,
+		nullptr,
 	},
 };
 
@@ -273,12 +337,25 @@ const ClipInfo* clipInfo(ClipName c)
 	return &Clips[c];
 }
 
-const char* checksumForClipFrame(const ClipInfo* cinfo, int frameNumber)
+const char* checksumForClipFrame(const ClipInfo* cinfo, int frameNumber, int planeNumber)
 {
 	DE_ASSERT(frameNumber >= 0 && frameNumber < cinfo->totalFrames);
-	return cinfo->frameChecksums[frameNumber];
+	switch (planeNumber)
+	{
+		case 0:
+			DE_ASSERT(cinfo->frameChecksums != nullptr);
+			return cinfo->frameChecksums[frameNumber];
+		case 1:
+			DE_ASSERT(cinfo->plane1Checksums != nullptr);
+			return cinfo->plane1Checksums[frameNumber];
+		case 2:
+			DE_ASSERT(cinfo->plane2Checksums != nullptr);
+			return cinfo->plane2Checksums[frameNumber];
+		default:
+			DE_ASSERT(false);
+			return nullptr;
+	}
 }
-
 
 } // namespace video
 } // namespace vkt

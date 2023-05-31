@@ -46,6 +46,7 @@ enum ClipName
 	CLIP_D,
 	CLIP_JELLY_AVC,
 	CLIP_JELLY_HEVC,
+	CLIP_WP_A_MAIN10_TOSHIBA_HEVC,
 
 	CLIP_LAST,
 };
@@ -68,11 +69,13 @@ struct ClipInfo
 	int			 totalFrames;
 	int			 framesInGOP;
 	int			 numGOPs;
-	const char** frameChecksums;
+	const char** frameChecksums; // plane 0
+	const char** plane1Checksums;
+	const char** plane2Checksums;
 };
 
 const ClipInfo* clipInfo(ClipName c);
-const char* checksumForClipFrame(const ClipInfo* cinfo, int frameNumber);
+const char* checksumForClipFrame(const ClipInfo* cinfo, int frameNumber, int planeNumber);
 
 } // namespace video
 } // namespace vkt

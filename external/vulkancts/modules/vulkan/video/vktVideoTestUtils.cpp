@@ -549,11 +549,27 @@ std::vector<deUint8> semiplanarToYV12(const ycbcr::MultiPlaneImageData& multiPla
 	return YV12Buffer;
 }
 
-bool imageMatchesReferenceChecksum(const ycbcr::MultiPlaneImageData& multiPlaneImageData, const std::string& referenceChecksum)
+bool imageMatchesReferenceChecksum(const ycbcr::MultiPlaneImageData& multiPlaneImageData, const std::string& referenceChecksum, int planeNumber)
 {
-	std::vector<deUint8> yv12 = semiplanarToYV12(multiPlaneImageData);
-	std::string checksum = MD5SumBase16(yv12.data(), yv12.size());
-	return checksum == referenceChecksum;
+	switch (multiPlaneImageData.getFormat())
+	{
+		case VK_FORMAT_G8_B8R8_2PLANE_420_UNORM:
+		{
+			DE_UNREF(planeNumber);
+			std::vector<deUint8> yv12 = semiplanarToYV12(multiPlaneImageData);
+			std::string checksum = MD5SumBase16(yv12.data(), yv12.size());
+			return checksum == referenceChecksum;
+		}
+		case VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16:
+		{
+			DE_ASSERT(multiPlaneImageData.getDescription().numPlanes == 2);
+			DE_ASSERT(planeNumber >= 0 && planeNumber < multiPlaneImageData.getDescription().numPlanes);
+			std::string checksum = MD5SumBase16(multiPlaneImageData.getPlanePtr(planeNumber), multiPlaneImageData.getPlaneSize(planeNumber));
+			return checksum == referenceChecksum;
+		}
+		default:
+			TCU_THROW(InternalError, "Unexpected format");
+	}
 }
 
 
@@ -633,14 +649,9 @@ VkVideoCodecOperationFlagsKHR getSupportedCodecs(DeviceContext& devCtx,
 
 VkResult getVideoFormats(DeviceContext& devCtx,
 								const VkVideoCoreProfile& videoProfile, VkImageUsageFlags imageUsage,
-								deUint32& formatCount, VkFormat* formats,
-								bool dumpData)
+								std::vector<VkFormat>& formats)
 {
 	auto& vkif = devCtx.context->getInstanceInterface();
-
-	for (deUint32 i = 0; i < formatCount; i++) {
-		formats[i] = VK_FORMAT_UNDEFINED;
-	}
 
 	const VkVideoProfileListInfoKHR videoProfiles = { VK_STRUCTURE_TYPE_VIDEO_PROFILE_LIST_INFO_KHR, nullptr, 1, videoProfile.GetProfile() };
 	const VkPhysicalDeviceVideoFormatInfoKHR videoFormatInfo = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VIDEO_FORMAT_INFO_KHR, const_cast<VkVideoProfileListInfoKHR *>(&videoProfiles),
@@ -648,31 +659,30 @@ VkResult getVideoFormats(DeviceContext& devCtx,
 
 	deUint32 supportedFormatCount = 0;
 	VkResult result = vkif.getPhysicalDeviceVideoFormatPropertiesKHR(devCtx.phys, &videoFormatInfo, &supportedFormatCount, nullptr);
+	TCU_CHECK_AND_THROW(NotSupportedError, result != VK_ERROR_VIDEO_PICTURE_LAYOUT_NOT_SUPPORTED_KHR, "The request picture layout is not supported");
+	TCU_CHECK_AND_THROW(NotSupportedError, result != VK_ERROR_VIDEO_PROFILE_OPERATION_NOT_SUPPORTED_KHR, "The request codec is not supported");
+	TCU_CHECK_AND_THROW(NotSupportedError, result != VK_ERROR_VIDEO_PROFILE_FORMAT_NOT_SUPPORTED_KHR, "The request video format is not supported");
+	TCU_CHECK_AND_THROW(NotSupportedError, result != VK_ERROR_VIDEO_PROFILE_CODEC_NOT_SUPPORTED_KHR, "The codec-specific parameters required by this stream are not supported");
 	DE_ASSERT(result == VK_SUCCESS);
-	DE_ASSERT(supportedFormatCount);
-
-	VkVideoFormatPropertiesKHR* pSupportedFormats = new VkVideoFormatPropertiesKHR[supportedFormatCount];
-	memset(pSupportedFormats, 0x00, supportedFormatCount * sizeof(VkVideoFormatPropertiesKHR));
-	for (deUint32 i = 0; i < supportedFormatCount; i++) {
-		pSupportedFormats[i].sType = VK_STRUCTURE_TYPE_VIDEO_FORMAT_PROPERTIES_KHR;
+	DE_ASSERT(supportedFormatCount > 0);
+	formats.resize(supportedFormatCount);
+	std::vector<VkVideoFormatPropertiesKHR> supportedFormatProperties(supportedFormatCount);
+	for (auto& fmt : supportedFormatProperties)
+	{
+		fmt.sType = VK_STRUCTURE_TYPE_VIDEO_FORMAT_PROPERTIES_KHR;
 	}
+	VK_CHECK(vkif.getPhysicalDeviceVideoFormatPropertiesKHR(devCtx.phys, &videoFormatInfo, &supportedFormatCount, supportedFormatProperties.data()));
 
-	result = vkif.getPhysicalDeviceVideoFormatPropertiesKHR(devCtx.phys, &videoFormatInfo, &supportedFormatCount, pSupportedFormats);
-	DE_ASSERT(result == VK_SUCCESS);
-	if (dumpData) {
+	if (videoLoggingEnabled()) {
 		std::cout << "\t\t\t" << ((videoProfile.GetCodecType() == VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR) ? "h264" : "h265") << "decode formats: " << std::endl;
-		for (deUint32 fmt = 0; fmt < supportedFormatCount; fmt++) {
-			std::cout << "\t\t\t " << fmt << ": " << std::hex << pSupportedFormats[fmt].format << std::dec << std::endl;
-		}
+		for (int i = 0; i < supportedFormatProperties.size(); i++)
+			std::cout << "\t\t\t " << i << ": " << std::hex << supportedFormatProperties[i].format << std::dec << std::endl;
 	}
 
-	formatCount = std::min(supportedFormatCount, formatCount);
-
-	for (deUint32 i = 0; i < formatCount; i++) {
-		formats[i] = pSupportedFormats[i].format;
+	for (int i = 0; i < supportedFormatProperties.size(); i++)
+	{
+		formats[i] = supportedFormatProperties[i].format;
 	}
-
-	delete[] pSupportedFormats;
 
 	return result;
 }
@@ -684,44 +694,68 @@ VkResult getSupportedVideoFormats(DeviceContext& devCtx,
 										 VkFormat& referencePicturesFormat)
 {
 	VkResult result = VK_ERROR_VIDEO_PROFILE_FORMAT_NOT_SUPPORTED_KHR;
+
+	auto findSuitableFormatForProfile = [videoProfile](const std::vector<VkFormat> formats)
+	{
+		if (videoProfile.is16BitFormat())
+		{
+			// Intel & AMD return 8-bit formats for a 16-bit video profile (10 & 12 bit formats). Not sure that's OK, but ensure the wider bit depth format is selected for CTS.
+			for (const auto &fmt: formats)
+			{
+				vk::PlanarFormatDescription desc = getPlanarFormatDescription(fmt);
+
+				if (desc.planes[0].elementSizeBytes == 2)
+				{
+					// Sanity check, no testing has been done for formats where the luma bit depth differs from the chroma bit depth
+					for (int planeIdx = 0; planeIdx < desc.numPlanes; planeIdx++)
+					{
+						// Note that for the chroma plane, the format is interleaved, and so the bitdepth will be a proper multiple of 2 under the current assumptions.
+						DE_ASSERT(desc.planes[planeIdx].elementSizeBytes >= 2 && desc.planes[planeIdx].elementSizeBytes % 2 == 0);
+					}
+
+					return fmt;
+				}
+			}
+			DE_ASSERT(false);
+			return formats[0];
+		}
+		else
+		{
+			return formats[0]; // TODO: More robust format checking?
+		}
+	};
+
 	if ((capabilityFlags & VK_VIDEO_DECODE_CAPABILITY_DPB_AND_OUTPUT_COINCIDE_BIT_KHR) != 0) {
-		// NV, Intel
-		VkFormat supportedDpbFormats[8];
-		deUint32 formatCount = sizeof(supportedDpbFormats) / sizeof(supportedDpbFormats[0]);
+                std::vector<VkFormat> supportedDpbFormats;
 		result = util::getVideoFormats(devCtx, videoProfile,
 									   (VK_IMAGE_USAGE_VIDEO_DECODE_DST_BIT_KHR | VK_IMAGE_USAGE_VIDEO_DECODE_DPB_BIT_KHR | VK_IMAGE_USAGE_TRANSFER_SRC_BIT),
-									   formatCount, supportedDpbFormats);
+									   supportedDpbFormats);
 
-		referencePicturesFormat = supportedDpbFormats[0];
-		pictureFormat = supportedDpbFormats[0];
+		referencePicturesFormat = findSuitableFormatForProfile(supportedDpbFormats);
+		pictureFormat = referencePicturesFormat;
 
 	} else if ((capabilityFlags & VK_VIDEO_DECODE_CAPABILITY_DPB_AND_OUTPUT_DISTINCT_BIT_KHR) != 0) {
 		// AMD
-		VkFormat supportedDpbFormats[8];
-		VkFormat supportedOutFormats[8];
-		deUint32 formatCount = sizeof(supportedDpbFormats) / sizeof(supportedDpbFormats[0]);
+		std::vector<VkFormat> supportedDpbFormats;
+		std::vector<VkFormat> supportedOutFormats;
 		result = util::getVideoFormats(devCtx, videoProfile,
 									   VK_IMAGE_USAGE_VIDEO_DECODE_DPB_BIT_KHR,
-									   formatCount, supportedDpbFormats);
+									   supportedDpbFormats);
 
 		DE_ASSERT(result == VK_SUCCESS);
 
 		result = util::getVideoFormats(devCtx, videoProfile,
 									   VK_IMAGE_USAGE_VIDEO_DECODE_DST_BIT_KHR | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
-									   formatCount, supportedOutFormats);
+									   supportedOutFormats);
 
-		referencePicturesFormat = supportedDpbFormats[0];
-		pictureFormat = supportedOutFormats[0];
+		referencePicturesFormat = findSuitableFormatForProfile(supportedDpbFormats);
+		pictureFormat = findSuitableFormatForProfile(supportedOutFormats);
 
 	} else {
-		fprintf(stderr, "\nERROR: Unsupported decode capability flags.");
-		return VK_ERROR_VIDEO_PROFILE_FORMAT_NOT_SUPPORTED_KHR;
+		TCU_THROW(InternalError, "Unexpected decode capabilities");
 	}
 
-	DE_ASSERT(result == VK_SUCCESS);
-	if (result != VK_SUCCESS) {
-		fprintf(stderr, "\nERROR: GetVideoFormats() result: 0x%x\n", result);
-	}
+	VK_CHECK(result);
 
 	DE_ASSERT((referencePicturesFormat != VK_FORMAT_UNDEFINED) && (pictureFormat != VK_FORMAT_UNDEFINED));
 	DE_ASSERT(referencePicturesFormat == pictureFormat);
